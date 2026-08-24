@@ -42,6 +42,15 @@ public:
     bool isDhtRunning() const;
     size_t dhtNodeCount() const;
 
+    // Spider-mode progress, independent of whether any metadata fetch has
+    // completed yet -- pool is targets queued to visit, visited is targets
+    // walked so far. Both climbing with discoveredCount() stuck at 0 means
+    // the walk is progressing but hasn't produced an announce yet (give it
+    // more time); pool/visited themselves stuck at 0 would point at spider
+    // mode not actually being active.
+    size_t spiderPoolSize() const;
+    size_t spiderVisitedCount() const;
+
 private:
     platform::Config cfg_;
     std::filesystem::path dataDir_;

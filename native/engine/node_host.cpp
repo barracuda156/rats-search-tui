@@ -99,4 +99,14 @@ size_t NodeHost::dhtNodeCount() const
     return client ? client->get_routing_table_size() : 0;
 }
 
+size_t NodeHost::spiderPoolSize() const
+{
+    return bittorrent_ ? bittorrent_->spider_pool_size() : 0;
+}
+
+size_t NodeHost::spiderVisitedCount() const
+{
+    return bittorrent_ ? bittorrent_->spider_visited_count() : 0;
+}
+
 } // namespace ratsn::engine

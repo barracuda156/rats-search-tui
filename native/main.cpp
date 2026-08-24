@@ -60,9 +60,11 @@ private:
         const auto stats = index_.counts();
         std::cout << "stats: torrents=" << stats.torrents << " files=" << stats.files;
         if (crawler_)
-            std::cout << " discovered=" << crawler_->discoveredCount();
-        if (nodeHost_)
-            std::cout << " dhtNodes=" << nodeHost_->dhtNodeCount();
+            std::cout << " discovered=" << crawler_->discoveredCount() << " activeFetches=" << crawler_->activeFetches();
+        if (nodeHost_) {
+            std::cout << " dhtNodes=" << nodeHost_->dhtNodeCount() << " spiderPool=" << nodeHost_->spiderPoolSize()
+                       << " spiderVisited=" << nodeHost_->spiderVisitedCount();
+        }
         std::cout << "\n";
         schedule();
     }

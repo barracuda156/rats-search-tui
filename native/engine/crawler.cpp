@@ -183,8 +183,12 @@ void Crawler::onAnnounce(const std::array<uint8_t, 20>& infoHash, const std::str
     // burn a fetch slot and bandwidth only for the indexer to discard the
     // result as a duplicate. The caller injects the "already indexed?"
     // lookup, which keeps the crawler index-free.
-    if (knownHashFilter_ && knownHashFilter_(hashHex))
+    if (knownHashFilter_ && knownHashFilter_(hashHex)) {
+        std::cout << "Crawler: already indexed " << hashHex.substr(0, 8) << ", skipping\n";
         return;
+    }
+
+    std::cout << "Crawler: announce " << hashHex.substr(0, 8) << " from " << ip << ":" << port << "\n";
 
     MetadataRequest request;
     request.infoHash = hashHex;
@@ -209,18 +213,22 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
 
     // librats manages the temporary torrent, the BEP 9 fetch and the
     // timeout; it invokes this callback exactly once (success or timeout) on
-    // a worker thread.
-    auto onResult = [this, infoHash](const librats::bittorrent::TorrentInfo& torrentInfo, bool success, const std::string&) {
+    // a worker thread -- std::cout here is diagnostic only, not marshalled.
+    auto onResult = [this, infoHash](const librats::bittorrent::TorrentInfo& torrentInfo, bool success, const std::string& error) {
         activeFetches_--;
 
-        if (!success || !torrentInfo.is_valid())
+        if (!success || !torrentInfo.is_valid()) {
+            std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << ": " << error << "\n";
             return;
+        }
 
         const domain::Torrent torrent = toDomainTorrent(infoHash, torrentInfo);
         engineLoop_.post([this, torrent] { onMetadataReceived(torrent); });
     };
 
-    if (!peerIp.empty() && peerPort > 0) {
+    const bool fastPath = !peerIp.empty() && peerPort > 0;
+    std::cout << "Crawler: fetching metadata for " << infoHash.substr(0, 8) << (fastPath ? " (fast path)\n" : " (DHT search)\n");
+    if (fastPath) {
         // Fast path: fetch directly from the announcing peer (no DHT search).
         bittorrent_->get_torrent_metadata_from_peer(infoHash, peerIp, peerPort, onResult);
     } else {
@@ -231,6 +239,7 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
 
 void Crawler::onMetadataReceived(const domain::Torrent& torrent)
 {
+    std::cout << "Crawler: discovered " << torrent.hash.substr(0, 8) << " \"" << torrent.name << "\"\n";
     discoveredCount_++;
     if (discovered_)
         discovered_(torrent);
