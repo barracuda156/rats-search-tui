@@ -8,6 +8,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <string>
 #include <thread>
 
@@ -36,6 +39,30 @@ Element renderTabBar(int tabIndex)
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
     engine::NodeHost* nodeHost, engine::Crawler* crawler, const StatusInfo& info)
 {
+    // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
+    // alternate screen buffer and repaints it wholesale on every redraw.
+    // Anything else writing straight to stdout/stderr while it's active --
+    // librats' own Logger (console-enabled by default, see
+    // src/librats/util/logger.h) and native/engine/crawler.cpp's/indexer.cpp's
+    // deliberately-kept diagnostic prints alike -- lands wherever the cursor
+    // happens to be and flashes on screen until the next FTXUI redraw wipes
+    // it. Redirecting std::cout/std::cerr's underlying buffer to a file for
+    // the whole session fixes both at once without touching either call
+    // site: the streams are process-wide, so librats' Logger (which writes
+    // via these same globals, not a separate fd) is redirected right along
+    // with ratsn's own prints. Restored before returning.
+    const std::filesystem::path logPath = std::filesystem::path(info.dataDir) / "ratsn.log";
+    std::ofstream logFile(logPath, std::ios::app);
+    std::streambuf* savedCout = nullptr;
+    std::streambuf* savedCerr = nullptr;
+    if (logFile) {
+        savedCout = std::cout.rdbuf(logFile.rdbuf());
+        savedCerr = std::cerr.rdbuf(logFile.rdbuf());
+    } else {
+        std::cerr << "ratsn: could not open " << logPath.string() << " for diagnostic logging; "
+                  << "background log lines may flash in the TUI\n";
+    }
+
     ScreenInteractive screen = ScreenInteractive::Fullscreen();
 
     StatusModel statusModel;
@@ -120,6 +147,15 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     engineLoop.stop();
     if (engineThread.joinable())
         engineThread.join();
+
+    // Restored last, after the engine thread is fully joined -- a task that
+    // fired right at shutdown may still have written a diagnostic line, and
+    // that should land in the log file too, not flash on a terminal that's
+    // mid-teardown of the alternate screen.
+    if (savedCout)
+        std::cout.rdbuf(savedCout);
+    if (savedCerr)
+        std::cerr.rdbuf(savedCerr);
 }
 
 } // namespace ratsn::tui
