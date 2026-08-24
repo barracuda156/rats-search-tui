@@ -281,8 +281,15 @@ keeps a future "import settings from rats-search" trivial.
     -DGRN_WITH_ZLIB=no -DGRN_WITH_MECAB=no` (dep gates are strings, not
     booleans; needs CMake ≥ 3.22; old gcc may need
     `-Wno-error=incompatible-pointer-types`).
-  - **FTXUI** — git submodule, static; pin a tagged release (v5.0.0 is a
-    known-good C++17 baseline), do not track head.
+  - **FTXUI** — system library via CMake's `find_package(ftxui 7 REQUIRED
+    CONFIG)` (the config FTXUI's own install generates), not vendored. Pinned
+    to the v7.x line specifically: v7.0.3 renamed `ScreenInteractive`'s
+    underlying class to `App` (`ScreenInteractive` is now just an alias) and
+    reworked parts of the component API relative to the v5.0.0 baseline
+    originally planned here; `native/tui/` is written against v7.0.3's API,
+    not v5's. A MacPorts port exists (`devel/FTXUI`) but as of this writing
+    is still at 5.0.0 — needs updating (or an alternate install path) before
+    this builds on the retro target.
   - **PCRE2** — system or vendored; used only by `filter_policy` (user
     regexes need real PCRE semantics; `std::regex` is the build-time
     fallback with documented semantic loss).
@@ -345,10 +352,11 @@ classifier output), the existing code wins — port it, don't improve it.
 **Repo layout & bootstrap.** New code goes in a top-level `native/` directory
 with its own standalone `CMakeLists.txt` (do not touch the root Qt build).
 It consumes librats via the existing `src/librats` submodule
-(`git submodule update --init --depth 1 src/librats`), adds FTXUI as a
-submodule under `native/3rdparty/ftxui`, and finds groonga + pcre2 via
-pkg-config. First target to bring up: `ratsn --console` that starts an empty
-EngineLoop and exits cleanly on SIGINT.
+(`git submodule update --init --depth 1 src/librats`), finds groonga + pcre2
+via pkg-config, and finds FTXUI (v7, system-installed) via
+`find_package(ftxui CONFIG)` -- see §9, not vendored. First target to bring
+up: `ratsn --console` that starts an empty EngineLoop and exits cleanly on
+SIGINT.
 
 **Groonga embedding bootstrap.** `grn_init()` once per process;
 `grn_ctx *ctx = grn_ctx_open(0)`; create/open the DB with

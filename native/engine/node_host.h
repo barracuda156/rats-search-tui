@@ -3,8 +3,10 @@
 #include "platform/config.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 namespace librats {
 class Node;
@@ -41,6 +43,13 @@ public:
 
     bool isDhtRunning() const;
     size_t dhtNodeCount() const;
+
+    // Short hex prefix of the node's self-certifying identity, and its bound
+    // listen port (the actual port when the config requested 0) -- both real
+    // regardless of M2's scope (Node is always up for DHT), unlike NAT/peer
+    // counts which need the mesh subsystems (M4+). Empty/0 when not running.
+    std::string nodeIdShort() const;
+    uint16_t listenPort() const;
 
     // Spider-mode progress, independent of whether any metadata fetch has
     // completed yet -- pool is targets queued to visit, visited is targets

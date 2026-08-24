@@ -1,0 +1,29 @@
+#pragma once
+
+#include "engine/crawler.h"
+#include "engine/node_host.h"
+#include "index/search_index.h"
+#include "platform/engine_loop.h"
+#include "tui/status_bar.h"
+
+#include <thread>
+
+// Top-level FTXUI application (docs/DESIGN-native.md §7): wires the tab bar,
+// Search/Status tabs and the bottom status bar together and drives the
+// blocking main loop. See native/main.cpp's cmdTui for how the engine
+// (NodeHost/Crawler/EngineLoop) is constructed and started before this runs.
+namespace ratsn::tui {
+
+// Runs the FTXUI interactive UI on the calling thread until the user quits
+// ('q') or the engine loop is stopped externally (SIGINT/SIGTERM), then
+// stops `engineLoop` and joins `engineThread` before returning -- the caller
+// must not touch either afterward assuming they're still running, and must
+// not join engineThread itself (this function already did; see app.cpp for
+// why that ordering, not the caller doing it, is what keeps this safe).
+// `engineLoop` must already be running on `engineThread` when this is
+// called. index, nodeHost and crawler are borrowed and must outlive this
+// call.
+void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, const StatusInfo& info);
+
+} // namespace ratsn::tui

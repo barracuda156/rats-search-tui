@@ -8,8 +8,7 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE RelWithDebInfo)
 endif()
 
-# M3 adds native/tui/*; nothing to build against it yet.
-option(RATSN_WITH_TUI "Build the FTXUI terminal UI" OFF)
+option(RATSN_WITH_TUI "Build the FTXUI terminal UI (native/tui/*)" ON)
 option(RATSN_FILE_INDEX_DEFAULT "Default value of the fileIndex config key" ON)
 # Default ON: link an already-installed librats (e.g. the packaged MacPorts
 # port) via find_package() instead of compiling src/librats from the
@@ -104,9 +103,25 @@ else()
     target_compile_definitions(ratsn_core PUBLIC RATSN_FILE_INDEX_DEFAULT=0)
 endif()
 
+if(RATSN_WITH_TUI)
+    # System-installed FTXUI only (no vendored submodule): find_package()
+    # against the CMake config FTXUI's own install generates (ftxui-config.cmake,
+    # exporting ftxui::screen/dom/component and the combined ftxui::ftxui).
+    # Pinned to the v7.x line -- v7 renamed ScreenInteractive's underlying
+    # class to App (ScreenInteractive is now just an alias) and reworked
+    # parts of the component API relative to v5; code under native/tui/ is
+    # written against v7.0.3 specifically; an older major won't satisfy this
+    # (FTXUI's version file uses SameMajorVersion compatibility) and code
+    # written against v7 isn't guaranteed to build against v5/v6 as-is.
+    find_package(ftxui 7 REQUIRED CONFIG)
+    target_sources(ratsn_core PRIVATE
+        tui/app.cpp
+        tui/search_tab.cpp
+        tui/status_bar.cpp
+    )
+    target_link_libraries(ratsn_core PUBLIC ftxui::ftxui)
+    target_compile_definitions(ratsn_core PUBLIC RATSN_WITH_TUI=1)
+endif()
+
 add_executable(ratsn main.cpp)
 target_link_libraries(ratsn PRIVATE ratsn_core)
-
-if(RATSN_WITH_TUI)
-    message(FATAL_ERROR "RATSN_WITH_TUI is not implemented until M3")
-endif()

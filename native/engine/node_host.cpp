@@ -109,4 +109,14 @@ size_t NodeHost::spiderVisitedCount() const
     return bittorrent_ ? bittorrent_->spider_visited_count() : 0;
 }
 
+std::string NodeHost::nodeIdShort() const
+{
+    return node_ ? node_->local_id().short_hex() : std::string();
+}
+
+uint16_t NodeHost::listenPort() const
+{
+    return node_ ? node_->listen_port() : 0;
+}
+
 } // namespace ratsn::engine

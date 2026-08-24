@@ -6,6 +6,9 @@
 #include "platform/config.h"
 #include "platform/engine_loop.h"
 #include "platform/paths.h"
+#ifdef RATSN_WITH_TUI
+#include "tui/app.h"
+#endif
 
 #include <atomic>
 #include <csignal>
@@ -15,6 +18,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 using ratsn::domain::SearchHit;
@@ -124,6 +128,54 @@ std::unique_ptr<GroongaIndex> openIndex(const std::filesystem::path& dataDir, st
     return GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, error);
 }
 
+// NodeHost (DHT + BitTorrent subsystems) -> Crawler (discovery + BEP9
+// metadata) -> Indexer (classify -> filter -> upsert), shared by --console
+// and tui so the two commands' spider setup can't drift apart. Empty
+// (all-null) when cfg.spider is off. On a node/crawler start failure, prints
+// the same diagnostic --console has always printed and leaves the
+// corresponding member null -- the pipeline degrades to index-only rather
+// than failing the whole command.
+struct SpiderPipeline {
+    std::unique_ptr<ratsn::engine::NodeHost> nodeHost;
+    std::unique_ptr<ratsn::engine::Crawler> crawler;
+    std::unique_ptr<ratsn::engine::Indexer> indexer;
+};
+
+SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
+{
+    SpiderPipeline p;
+    if (!cfg.spider)
+        return p;
+
+    ratsn::domain::FilterSettings filterSettings;
+    filterSettings.maxFiles = cfg.filters.maxFiles;
+    filterSettings.sizeMin = cfg.filters.sizeMin;
+    filterSettings.sizeMax = cfg.filters.sizeMax;
+    filterSettings.adultFilter = cfg.filters.adultFilter;
+    filterSettings.namingRegExp = cfg.filters.namingRegExp;
+    filterSettings.namingRegExpNegative = cfg.filters.namingRegExpNegative;
+    filterSettings.contentTypeFilter = cfg.filters.contentType;
+    p.indexer = std::make_unique<ratsn::engine::Indexer>(index, std::move(filterSettings));
+
+    p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir);
+    if (!p.nodeHost->start()) {
+        std::cerr << "ratsn: failed to start node/DHT; spider disabled\n";
+        p.nodeHost.reset();
+        return p;
+    }
+
+    p.crawler = std::make_unique<ratsn::engine::Crawler>(p.nodeHost->bittorrent(), loop);
+    p.crawler->setWalkInterval(cfg.walkInterval);
+    ratsn::engine::Indexer* indexerPtr = p.indexer.get();
+    p.crawler->setKnownHashFilter([indexerPtr](const std::string& hash) { return indexerPtr->isKnownHash(hash); });
+    p.crawler->setDiscoveredCallback([indexerPtr](const Torrent& t) { indexerPtr->handleDiscovered(t); });
+    if (!p.crawler->start()) {
+        std::cerr << "ratsn: failed to start crawler\n";
+        p.crawler.reset();
+    }
+    return p;
+}
+
 void printTorrentLine(const Torrent& t)
 {
     std::cout << t.hash << "  seeders=" << t.seeders << "  size=" << t.size << "  " << t.name << "\n";
@@ -152,62 +204,83 @@ int cmdConsole(std::vector<std::string> args)
     std::signal(SIGINT, handleSigint);
     std::signal(SIGTERM, handleSigint);
 
-    // Spider pipeline: NodeHost (DHT + BitTorrent subsystems) -> Crawler
-    // (discovery + BEP9 metadata) -> Indexer (classify -> filter -> upsert).
-    // Skipped entirely when cfg.spider is off, matching M1's index-only mode.
-    std::unique_ptr<ratsn::engine::NodeHost> nodeHost;
-    std::unique_ptr<ratsn::engine::Crawler> crawler;
-    std::unique_ptr<ratsn::engine::Indexer> indexer;
-
-    if (cfg.spider) {
-        ratsn::domain::FilterSettings filterSettings;
-        filterSettings.maxFiles = cfg.filters.maxFiles;
-        filterSettings.sizeMin = cfg.filters.sizeMin;
-        filterSettings.sizeMax = cfg.filters.sizeMax;
-        filterSettings.adultFilter = cfg.filters.adultFilter;
-        filterSettings.namingRegExp = cfg.filters.namingRegExp;
-        filterSettings.namingRegExpNegative = cfg.filters.namingRegExpNegative;
-        filterSettings.contentTypeFilter = cfg.filters.contentType;
-        indexer = std::make_unique<ratsn::engine::Indexer>(*index, std::move(filterSettings));
-
-        nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir);
-        if (!nodeHost->start()) {
-            std::cerr << "ratsn: failed to start node/DHT; spider disabled\n";
-            nodeHost.reset();
-        } else {
-            crawler = std::make_unique<ratsn::engine::Crawler>(nodeHost->bittorrent(), loop);
-            crawler->setWalkInterval(cfg.walkInterval);
-            ratsn::engine::Indexer* indexerPtr = indexer.get();
-            crawler->setKnownHashFilter([indexerPtr](const std::string& hash) { return indexerPtr->isKnownHash(hash); });
-            crawler->setDiscoveredCallback(
-                [indexerPtr](const Torrent& t) { indexerPtr->handleDiscovered(t); });
-            if (!crawler->start()) {
-                std::cerr << "ratsn: failed to start crawler\n";
-                crawler.reset();
-            }
-        }
-    }
+    SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
 
     const auto stats = index->counts();
     std::cout << "ratsn --console: data dir " << dataDir.string() << ", fileIndex=" << (cfg.fileIndex ? "on" : "off")
-               << ", spider=" << (crawler ? "on" : "off")
+               << ", spider=" << (pipeline.crawler ? "on" : "off")
                << "\nindexed " << stats.torrents << " torrents, " << stats.files << " files. Ctrl-C to exit.\n";
 
-    StatsPrinter statsPrinter(loop, *index, crawler.get(), nodeHost.get());
-    if (crawler)
+    StatsPrinter statsPrinter(loop, *index, pipeline.crawler.get(), pipeline.nodeHost.get());
+    if (pipeline.crawler)
         statsPrinter.start(5000);
 
     loop.run();
 
-    if (crawler)
-        crawler->stop();
-    if (nodeHost)
-        nodeHost->stop();
+    if (pipeline.crawler)
+        pipeline.crawler->stop();
+    if (pipeline.nodeHost)
+        pipeline.nodeHost->stop();
 
     g_engineLoop.store(nullptr, std::memory_order_relaxed);
     std::cout << "\nratsn: shutting down\n";
     return 0;
 }
+
+#ifdef RATSN_WITH_TUI
+int cmdTui(std::vector<std::string> args)
+{
+    const std::string dataDirArg = extractDataDir(args);
+    const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
+    const std::filesystem::path cfgPath = ratsn::platform::configFile(dataDir);
+
+    Config cfg = Config::load(cfgPath);
+    if (!std::filesystem::exists(cfgPath))
+        cfg.save(cfgPath);
+
+    GroongaRuntime runtime;
+    std::string error;
+    std::unique_ptr<GroongaIndex> index = GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, &error);
+    if (!index) {
+        std::cerr << "ratsn: failed to open index: " << error << "\n";
+        return 1;
+    }
+
+    // Unlike --console (which runs the EngineLoop on the calling thread),
+    // the TUI needs the calling thread free for FTXUI's own blocking event
+    // loop -- so the EngineLoop runs on a background thread instead
+    // (docs/DESIGN-native.md §3). SIGINT is also handled by FTXUI itself by
+    // default (Ctrl-C); registering handleSigint here too is a redundant
+    // safety net, same as --console, and covers SIGTERM which FTXUI doesn't.
+    EngineLoop loop;
+    g_engineLoop.store(&loop, std::memory_order_relaxed);
+    std::signal(SIGINT, handleSigint);
+    std::signal(SIGTERM, handleSigint);
+
+    SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
+
+    ratsn::tui::StatusInfo info;
+    info.dataDir = dataDir.string();
+    info.spiderEnabled = static_cast<bool>(pipeline.crawler);
+    info.fileIndexEnabled = cfg.fileIndex;
+    if (pipeline.nodeHost) {
+        info.nodeId = pipeline.nodeHost->nodeIdShort();
+        info.listenPort = pipeline.nodeHost->listenPort();
+    }
+
+    std::thread engineThread([&loop] { loop.run(); });
+    // Stops and joins engineThread itself before returning -- see tui/app.cpp.
+    ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), info);
+
+    if (pipeline.crawler)
+        pipeline.crawler->stop();
+    if (pipeline.nodeHost)
+        pipeline.nodeHost->stop();
+
+    g_engineLoop.store(nullptr, std::memory_order_relaxed);
+    return 0;
+}
+#endif
 
 int cmdSearch(std::vector<std::string> args)
 {
@@ -365,6 +438,9 @@ void printUsage()
     std::cerr << "usage: ratsn <command> [--data-dir DIR] [options]\n"
                  "commands:\n"
                  "  --console            run the (currently idle) engine loop until Ctrl-C\n"
+#ifdef RATSN_WITH_TUI
+                 "  tui                  interactive terminal UI (search/status) on the live index\n"
+#endif
                  "  search <query>       query the local index\n"
                  "  add <file.json...>   hand-load one or more torrent JSON records\n"
                  "  top                  list top torrents by seeders\n"
@@ -387,6 +463,10 @@ int main(int argc, char** argv)
     try {
         if (command == "--console")
             return cmdConsole(std::move(args));
+#ifdef RATSN_WITH_TUI
+        if (command == "tui")
+            return cmdTui(std::move(args));
+#endif
         if (command == "search")
             return cmdSearch(std::move(args));
         if (command == "add")
