@@ -75,7 +75,13 @@ const ClassifierData& data()
 
         const librats::Json exts = librats::Json::parse(embedded::kExtensionsJson, nullptr, false);
         if (exts.is_object()) {
-            for (auto&& [key, value] : exts.items()) {
+            // Object::storage is std::vector<std::pair<std::string, Json>>, so
+            // this decomposes cleanly. Json::items()'s Iterator::operator*()
+            // returns just the value (key() is a separate call on the
+            // iterator) despite its own header comment showing [key, val]
+            // structured bindings -- that usage fails to compile (Json isn't
+            // itself decomposable: private members, anonymous union).
+            for (const auto& [key, value] : exts.as_object()) {
                 if (value.is_string())
                     out.extensionToType.emplace(key, value.get<std::string>());
             }
