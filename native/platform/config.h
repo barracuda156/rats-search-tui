@@ -22,7 +22,11 @@ struct FilterConfig {
 
 struct Config {
     bool spider = true;
-    int walkInterval = 1000; // ms between DHT walk steps
+    // ms between DHT walk steps. 100 matches the Qt app's real, tuned default
+    // (src/app/config_store.cpp) -- it shipped slower once and got a
+    // dedicated migration (v2.0.19) specifically to bring old installs up to
+    // 100ms, so this isn't an arbitrary choice.
+    int walkInterval = 100;
     int dhtPort = 0; // 0 = let librats pick
     bool upnp = true;
     bool holePunch = true;
