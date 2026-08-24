@@ -1,4 +1,7 @@
 #include "domain/torrent_codec.h"
+#include "engine/crawler.h"
+#include "engine/indexer.h"
+#include "engine/node_host.h"
 #include "index/groonga_index.h"
 #include "platform/config.h"
 #include "platform/engine_loop.h"
@@ -26,6 +29,50 @@ using ratsn::platform::EngineLoop;
 namespace {
 
 std::atomic<EngineLoop*> g_engineLoop { nullptr };
+
+// Periodic "torrents=N files=N discovered=N dhtNodes=N" line -- the M2
+// deliverable's explicit stats-line requirement (docs/DESIGN-native.md §10).
+// Self-reschedules like Crawler's own timers; stops naturally once the loop
+// is asked to stop.
+class StatsPrinter {
+public:
+    StatsPrinter(EngineLoop& loop, GroongaIndex& index, ratsn::engine::Crawler* crawler, ratsn::engine::NodeHost* nodeHost)
+        : loop_(loop)
+        , index_(index)
+        , crawler_(crawler)
+        , nodeHost_(nodeHost)
+    {
+    }
+
+    void start(int intervalMs)
+    {
+        intervalMs_ = intervalMs;
+        schedule();
+    }
+
+private:
+    void schedule() { loop_.postDelayed([this] { tick(); }, intervalMs_); }
+
+    void tick()
+    {
+        if (!loop_.isRunning())
+            return;
+        const auto stats = index_.counts();
+        std::cout << "stats: torrents=" << stats.torrents << " files=" << stats.files;
+        if (crawler_)
+            std::cout << " discovered=" << crawler_->discoveredCount();
+        if (nodeHost_)
+            std::cout << " dhtNodes=" << nodeHost_->dhtNodeCount();
+        std::cout << "\n";
+        schedule();
+    }
+
+    EngineLoop& loop_;
+    GroongaIndex& index_;
+    ratsn::engine::Crawler* crawler_;
+    ratsn::engine::NodeHost* nodeHost_;
+    int intervalMs_ = 5000;
+};
 
 void handleSigint(int)
 {
@@ -103,11 +150,58 @@ int cmdConsole(std::vector<std::string> args)
     std::signal(SIGINT, handleSigint);
     std::signal(SIGTERM, handleSigint);
 
+    // Spider pipeline: NodeHost (DHT + BitTorrent subsystems) -> Crawler
+    // (discovery + BEP9 metadata) -> Indexer (classify -> filter -> upsert).
+    // Skipped entirely when cfg.spider is off, matching M1's index-only mode.
+    std::unique_ptr<ratsn::engine::NodeHost> nodeHost;
+    std::unique_ptr<ratsn::engine::Crawler> crawler;
+    std::unique_ptr<ratsn::engine::Indexer> indexer;
+
+    if (cfg.spider) {
+        ratsn::domain::FilterSettings filterSettings;
+        filterSettings.maxFiles = cfg.filters.maxFiles;
+        filterSettings.sizeMin = cfg.filters.sizeMin;
+        filterSettings.sizeMax = cfg.filters.sizeMax;
+        filterSettings.adultFilter = cfg.filters.adultFilter;
+        filterSettings.namingRegExp = cfg.filters.namingRegExp;
+        filterSettings.namingRegExpNegative = cfg.filters.namingRegExpNegative;
+        filterSettings.contentTypeFilter = cfg.filters.contentType;
+        indexer = std::make_unique<ratsn::engine::Indexer>(*index, std::move(filterSettings));
+
+        nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir);
+        if (!nodeHost->start()) {
+            std::cerr << "ratsn: failed to start node/DHT; spider disabled\n";
+            nodeHost.reset();
+        } else {
+            crawler = std::make_unique<ratsn::engine::Crawler>(nodeHost->bittorrent(), loop);
+            crawler->setWalkInterval(cfg.walkInterval);
+            ratsn::engine::Indexer* indexerPtr = indexer.get();
+            crawler->setKnownHashFilter([indexerPtr](const std::string& hash) { return indexerPtr->isKnownHash(hash); });
+            crawler->setDiscoveredCallback(
+                [indexerPtr](const Torrent& t) { indexerPtr->handleDiscovered(t); });
+            if (!crawler->start()) {
+                std::cerr << "ratsn: failed to start crawler\n";
+                crawler.reset();
+            }
+        }
+    }
+
     const auto stats = index->counts();
     std::cout << "ratsn --console: data dir " << dataDir.string() << ", fileIndex=" << (cfg.fileIndex ? "on" : "off")
+               << ", spider=" << (crawler ? "on" : "off")
                << "\nindexed " << stats.torrents << " torrents, " << stats.files << " files. Ctrl-C to exit.\n";
 
+    StatsPrinter statsPrinter(loop, *index, crawler.get(), nodeHost.get());
+    if (crawler)
+        statsPrinter.start(5000);
+
     loop.run();
+
+    if (crawler)
+        crawler->stop();
+    if (nodeHost)
+        nodeHost->stop();
+
     g_engineLoop.store(nullptr, std::memory_order_relaxed);
     std::cout << "\nratsn: shutting down\n";
     return 0;

@@ -31,7 +31,7 @@ FilterConfig filtersFromJson(const librats::Json& j)
     f.sizeMax = j.value("sizeMax", int64_t { 0 });
     f.maxFiles = j.value("maxFiles", 0);
     f.namingRegExp = j.value("namingRegExp", "");
-    f.namingRegExpNegative = j.value("namingRegExpNegative", "");
+    f.namingRegExpNegative = j.value("namingRegExpNegative", false);
     f.adultFilter = j.value("adultFilter", false);
     f.contentType = j.value("contentType", "");
     return f;

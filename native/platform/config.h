@@ -15,7 +15,7 @@ struct FilterConfig {
     int64_t sizeMax = 0;
     int maxFiles = 0;
     std::string namingRegExp;
-    std::string namingRegExpNegative;
+    bool namingRegExpNegative = false;
     bool adultFilter = false;
     std::string contentType; // "", "video", ..., "application" (Software+Games)
 };
