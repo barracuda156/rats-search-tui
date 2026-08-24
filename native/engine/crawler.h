@@ -63,7 +63,9 @@ public:
 private:
     // A pending metadata fetch. An empty peerIp means "no announcing peer
     // known" -- fall back to a DHT search (slow path) instead of a direct
-    // peer connection (fast path).
+    // peer connection (fast path). A failed fast-path fetch is re-queued
+    // once with the peer cleared (see fetchMetadata), so the slow path also
+    // serves as the single retry; a slow-path failure is final.
     struct MetadataRequest {
         std::string infoHash; // lower-case hex
         std::string peerIp;

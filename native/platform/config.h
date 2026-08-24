@@ -27,7 +27,14 @@ struct Config {
     // dedicated migration (v2.0.19) specifically to bring old installs up to
     // 100ms, so this isn't an arbitrary choice.
     int walkInterval = 100;
-    int dhtPort = 0; // 0 = let librats pick
+    // Default matches the Qt app (src/app/config_store.cpp). A stable port
+    // matters for the spider: announce inflow depends on remote routing
+    // tables still pointing at us, and an ephemeral port (set 0 to get one)
+    // resets that reputation on every restart.
+    int dhtPort = 6881;
+    // Not read anywhere yet: NodeHost attaches neither PortMappingService
+    // nor HolePunch until the mesh subsystems land in M4 (docs/M4-PLAN.md).
+    // Kept so config files written now stay valid then.
     bool upnp = true;
     bool holePunch = true;
     std::string downloadPath;

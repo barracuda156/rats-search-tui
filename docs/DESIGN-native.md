@@ -287,9 +287,8 @@ keeps a future "import settings from rats-search" trivial.
     underlying class to `App` (`ScreenInteractive` is now just an alias) and
     reworked parts of the component API relative to the v5.0.0 baseline
     originally planned here; `native/tui/` is written against v7.0.3's API,
-    not v5's. A MacPorts port exists (`devel/FTXUI`) but as of this writing
-    is still at 5.0.0 — needs updating (or an alternate install path) before
-    this builds on the retro target.
+    not v5's. On the retro target it is provided by the project owner's own
+    ports overlay (macos-powerpc/powerpc-ports, `devel/FTXUI`).
   - **PCRE2** — system or vendored; used only by `filter_policy` (user
     regexes need real PCRE semantics; `std::regex` is the build-time
     fallback with documented semantic loss).
@@ -306,6 +305,9 @@ keeps a future "import settings from rats-search" trivial.
 | M4 | wire compat: peer_api handlers + remote search merge; golden-file tests against the Qt app | network membership | 1.0k |
 | M5 | downloads tab + session resume | BT client integration | 0.8k |
 | M6 | votes/feed/top via StorageManager; feed tab | full parity target | 1.2k |
+
+M4's concrete implementation plan (scope decisions, module list, wire surface,
+acceptance-lab setup) is in docs/M4-PLAN.md.
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian

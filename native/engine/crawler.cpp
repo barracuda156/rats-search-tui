@@ -210,15 +210,33 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
     const std::string infoHash = request.infoHash;
     const std::string peerIp = request.peerIp;
     const uint16_t peerPort = request.peerPort;
+    const bool fastPath = !peerIp.empty() && peerPort > 0;
 
     // librats manages the temporary torrent, the BEP 9 fetch and the
     // timeout; it invokes this callback exactly once (success or timeout) on
     // a worker thread -- std::cout here is diagnostic only, not marshalled.
-    auto onResult = [this, infoHash](const librats::bittorrent::TorrentInfo& torrentInfo, bool success, const std::string& error) {
+    auto onResult = [this, infoHash, fastPath](const librats::bittorrent::TorrentInfo& torrentInfo, bool success, const std::string& error) {
         activeFetches_--;
 
         if (!success || !torrentInfo.is_valid()) {
-            std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << ": " << error << "\n";
+            // A fast-path failure only proves the announcing peer was
+            // unhelpful (gone, firewalled, no ut_metadata support) -- the
+            // info-hash itself is still good, and announces are the scarce
+            // resource. Re-queue it once for the DHT-search slow path
+            // instead of dropping it; the Qt app just drops these
+            // (deliberate improvement over the port source). A slow-path
+            // failure arrives here with fastPath false and falls through, so
+            // each announce is retried at most once by construction.
+            if (fastPath && running_) {
+                std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << " (" << error
+                          << "), retrying via DHT search\n";
+                MetadataRequest retry;
+                retry.infoHash = infoHash;
+                std::lock_guard<std::mutex> lock(queueMutex_);
+                metadataQueue_.push(std::move(retry));
+            } else {
+                std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << ": " << error << "\n";
+            }
             return;
         }
 
@@ -226,7 +244,6 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
         engineLoop_.post([this, torrent] { onMetadataReceived(torrent); });
     };
 
-    const bool fastPath = !peerIp.empty() && peerPort > 0;
     std::cout << "Crawler: fetching metadata for " << infoHash.substr(0, 8) << (fastPath ? " (fast path)\n" : " (DHT search)\n");
     if (fastPath) {
         // Fast path: fetch directly from the announcing peer (no DHT search).
