@@ -439,7 +439,7 @@ void printUsage()
                  "commands:\n"
                  "  --console            run the (currently idle) engine loop until Ctrl-C\n"
 #ifdef RATSN_WITH_TUI
-                 "  tui                  interactive terminal UI (search/status) on the live index\n"
+                 "  --tui                interactive terminal UI (search/status) on the live index\n"
 #endif
                  "  search <query>       query the local index\n"
                  "  add <file.json...>   hand-load one or more torrent JSON records\n"
@@ -464,7 +464,7 @@ int main(int argc, char** argv)
         if (command == "--console")
             return cmdConsole(std::move(args));
 #ifdef RATSN_WITH_TUI
-        if (command == "tui")
+        if (command == "--tui")
             return cmdTui(std::move(args));
 #endif
         if (command == "search")

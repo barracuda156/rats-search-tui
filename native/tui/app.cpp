@@ -2,6 +2,8 @@
 
 #include "tui/search_tab.h"
 
+#include "librats/util/logger.h"
+
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -9,8 +11,6 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <string>
 #include <thread>
 
@@ -41,28 +41,38 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
-    // Anything else writing straight to stdout/stderr while it's active --
-    // librats' own Logger (console-enabled by default, see
-    // src/librats/util/logger.h) and native/engine/crawler.cpp's/indexer.cpp's
-    // deliberately-kept diagnostic prints alike -- lands wherever the cursor
-    // happens to be and flashes on screen until the next FTXUI redraw wipes
-    // it. Redirecting std::cout/std::cerr's underlying buffer to a file for
-    // the whole session fixes both at once without touching either call
-    // site: the streams are process-wide, so librats' Logger (which writes
-    // via these same globals, not a separate fd) is redirected right along
-    // with ratsn's own prints. Restored before returning.
-    const std::filesystem::path logPath = std::filesystem::path(info.dataDir) / "ratsn.log";
-    std::ofstream logFile(logPath, std::ios::app);
-    std::streambuf* savedCout = nullptr;
-    std::streambuf* savedCerr = nullptr;
-    if (logFile) {
-        savedCout = std::cout.rdbuf(logFile.rdbuf());
-        savedCerr = std::cerr.rdbuf(logFile.rdbuf());
-    } else {
-        std::cerr << "ratsn: could not open " << logPath.string() << " for diagnostic logging; "
-                  << "background log lines may flash in the TUI\n";
-    }
+    // librats' own Logger writes its DHT/network diagnostics straight to
+    // std::cout/std::cerr by default (console-enabled by default, see
+    // src/librats/util/logger.h) -- those lines land wherever the cursor
+    // happens to be and flash on screen until the next FTXUI redraw wipes
+    // them. Fixed by using the Logger's own file-logging mode instead of
+    // redirecting std::cout/std::cerr globally: FTXUI's own screen writes
+    // ALSO go through std::cout (App::Internal::TerminalFlush, in FTXUI's
+    // own source) -- a blanket stream redirect silently swallows the TUI's
+    // rendering right along with the log spam, which is exactly what
+    // happened the first time this was "fixed" (nothing but the pre-launch
+    // startup log ever reached the terminal). Redirecting the Logger
+    // specifically has no such conflict: it's a separate file handle, not a
+    // shared global stream. Settings are captured and restored so a future
+    // caller of Logger::getInstance() (e.g. --console) isn't left pointed at
+    // this session's log file.
+    librats::Logger& logger = librats::Logger::getInstance();
+    const bool priorConsoleLogging = logger.is_console_logging_enabled();
+    const bool priorFileLogging = logger.is_file_logging_enabled();
+    const std::string priorLogFilePath = logger.get_log_file_path();
+    logger.set_log_file_path((std::filesystem::path(info.dataDir) / "ratsn.log").string());
+    logger.set_file_logging_enabled(true);
+    logger.set_console_logging_enabled(false);
 
+    // native/engine/crawler.cpp's and indexer.cpp's own diagnostic prints
+    // (kept deliberately for --console, see the M2 notes) are plain
+    // std::cout/std::cerr too and carry the same theoretical flash risk --
+    // left alone here since, unlike librats' Logger, they aren't routed
+    // through anything redirectable without either touching validated
+    // --console behavior or inventing a new sink. They're event-driven
+    // (discover/reject), not per-DHT-operation, so far less frequent than
+    // what was actually observed leaking; revisit if that turns out to
+    // matter in practice.
     ScreenInteractive screen = ScreenInteractive::Fullscreen();
 
     StatusModel statusModel;
@@ -149,13 +159,12 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
         engineThread.join();
 
     // Restored last, after the engine thread is fully joined -- a task that
-    // fired right at shutdown may still have written a diagnostic line, and
-    // that should land in the log file too, not flash on a terminal that's
-    // mid-teardown of the alternate screen.
-    if (savedCout)
-        std::cout.rdbuf(savedCout);
-    if (savedCerr)
-        std::cerr.rdbuf(savedCerr);
+    // fired right at shutdown may still have logged something, and that
+    // should land in the file too, not the terminal mid-teardown of the
+    // alternate screen.
+    logger.set_console_logging_enabled(priorConsoleLogging);
+    logger.set_file_logging_enabled(priorFileLogging);
+    logger.set_log_file_path(priorLogFilePath);
 }
 
 } // namespace ratsn::tui
