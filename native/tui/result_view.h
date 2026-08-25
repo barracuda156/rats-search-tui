@@ -45,8 +45,8 @@ public:
     // Builds (once) and returns the results Menu component, bound to this
     // view's selection state.
     ftxui::Component menu();
-    // Combines `menuComponent`'s render with the details pane, exactly the
-    // hbox layout the Search tab used before extraction.
+    // Combines `menuComponent`'s render with the details pane and (below it,
+    // as its own line) the statusMessage_ status line.
     ftxui::Element renderPane(const ftxui::Component& menuComponent) const;
 
     // 'm'/'t' handling (docs/M5-PLAN.md items 5/6); returns true if the event
@@ -67,7 +67,11 @@ private:
     std::vector<domain::SearchHit> results_;
     std::vector<std::string> resultLines_; // one preformatted line per result, for Menu
     int selected_ = 0;
-    std::string statusMessage_; // set by 'm'/'t', shown in the details pane
+    // Set by 'm'/'t'; rendered as its own line below the details pane (see
+    // renderPane), not inside it -- it reports an action's outcome, which
+    // stays true regardless of what's currently selected, so it must not
+    // read as info about whichever torrent the selection has since moved to.
+    std::string statusMessage_;
 
     // Hashes with a save-.torrent fetch in flight (item 6); UI-thread only
     // (touched only from handleSaveTorrent and the screen_.Post completion

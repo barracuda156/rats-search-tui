@@ -110,11 +110,6 @@ Element ResultView::renderDetails() const
         }
     }
 
-    if (!statusMessage_.empty()) {
-        lines.push_back(separatorEmpty());
-        lines.push_back(text(statusMessage_) | color(Color::Yellow));
-    }
-
     return vbox(std::move(lines)) | frame;
 }
 
@@ -128,6 +123,18 @@ Component ResultView::menu()
 
 Element ResultView::renderPane(const ftxui::Component& menuComponent) const
 {
+    // statusMessage_ ('m'/'t' feedback) is a standalone status line, not part
+    // of renderDetails(): it reports the outcome of an action, which stays
+    // true no matter what's currently selected -- folding it into the
+    // per-torrent details block (as an earlier version did) made it look
+    // like info about whatever torrent the user had since scrolled to.
+    Elements rightColumn;
+    rightColumn.push_back(renderDetails() | flex);
+    if (!statusMessage_.empty()) {
+        rightColumn.push_back(separator());
+        rightColumn.push_back(text(statusMessage_) | color(Color::Yellow));
+    }
+
     return hbox({
         // yframe, not frame: frame scrolls BOTH axes to center the selected
         // entry's full (untruncated) box in the viewport, and every result
@@ -143,7 +150,7 @@ Element ResultView::renderPane(const ftxui::Component& menuComponent) const
         // like.
         menuComponent->Render() | yframe | size(WIDTH, LESS_THAN, 62),
         separator(),
-        renderDetails() | flex,
+        vbox(std::move(rightColumn)) | flex,
     });
 }
 
