@@ -1,5 +1,6 @@
 #include "domain/torrent_codec.h"
 #include "engine/crawler.h"
+#include "engine/downloads.h"
 #include "engine/indexer.h"
 #include "engine/node_host.h"
 #include "engine/peer_api.h"
@@ -46,11 +47,13 @@ std::atomic<EngineLoop*> g_engineLoop { nullptr };
 // is asked to stop.
 class StatsPrinter {
 public:
-    StatsPrinter(EngineLoop& loop, GroongaIndex& index, ratsn::engine::Crawler* crawler, ratsn::engine::NodeHost* nodeHost)
+    StatsPrinter(EngineLoop& loop, GroongaIndex& index, ratsn::engine::Crawler* crawler, ratsn::engine::NodeHost* nodeHost,
+        ratsn::engine::DownloadManager* downloads)
         : loop_(loop)
         , index_(index)
         , crawler_(crawler)
         , nodeHost_(nodeHost)
+        , downloads_(downloads)
     {
     }
 
@@ -75,6 +78,10 @@ private:
             std::cout << " dhtNodes=" << nodeHost_->dhtNodeCount() << " spiderPool=" << nodeHost_->spiderPoolSize()
                        << " spiderVisited=" << nodeHost_->spiderVisitedCount() << " peers=" << nodeHost_->peerCount();
         }
+        if (downloads_) {
+            const auto agg = downloads_->aggregate();
+            std::cout << " dl=" << agg.active << " dlSpeed=" << static_cast<int64_t>(agg.downloadSpeed) << "B/s";
+        }
         std::cout << "\n";
         schedule();
     }
@@ -83,6 +90,7 @@ private:
     GroongaIndex& index_;
     ratsn::engine::Crawler* crawler_;
     ratsn::engine::NodeHost* nodeHost_;
+    ratsn::engine::DownloadManager* downloads_;
     int intervalMs_ = 5000;
 };
 
@@ -134,7 +142,7 @@ std::unique_ptr<GroongaIndex> openIndex(const std::filesystem::path& dataDir, st
     return GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, error);
 }
 
-// Shared by startSpiderPipeline (live filtering), cmdImport and cmdCleanup
+// Shared by startEnginePipeline (live filtering), cmdImport and cmdCleanup
 // (docs/M5-PLAN.md items 3/4/8) so the same config keys drive filtering
 // everywhere, instead of three independently-maintained copies of this
 // block.
@@ -154,50 +162,73 @@ ratsn::domain::FilterSettings filterSettingsFromConfig(const Config& cfg)
     return fs;
 }
 
+// Config::downloadPath (Qt key, docs/M6-PLAN.md item 4): empty falls back to
+// $HOME/Downloads when set, else <dataDir>/downloads. Qt uses the OS
+// download location via QStandardPaths; this is the closest portable
+// equivalent for a target (retro PowerPC) with no such standard directory.
+std::string resolveDownloadPath(const Config& cfg, const std::filesystem::path& dataDir)
+{
+    if (!cfg.downloadPath.empty())
+        return cfg.downloadPath;
+    if (const char* home = std::getenv("HOME"); home && *home)
+        return (std::filesystem::path(home) / "Downloads").string();
+    return (dataDir / "downloads").string();
+}
+
 // Client version advertised to peers in the client_info handshake
 // (PeerRegistry); RATSN_VERSION is a CMake compile definition (native/CMakeLists.txt).
 constexpr const char* kClientVersion = "ratsn/" RATSN_VERSION;
 
 // NodeHost (DHT + BitTorrent + P2P mesh) -> Crawler (discovery + BEP9
 // metadata) -> Indexer (classify -> filter -> upsert), plus the M4 mesh
-// pieces (PeerApi, Replication) layered on NodeHost's MessageJson. Shared by
-// --console and tui so the two commands' spider/mesh setup can't drift
-// apart. Empty (all-null) when cfg.spider is off. On a node/crawler start
-// failure, prints the same diagnostic --console has always printed and
-// leaves the corresponding member null -- the pipeline degrades to
-// index-only rather than failing the whole command.
-struct SpiderPipeline {
+// pieces (PeerApi, Replication) layered on NodeHost's MessageJson, and (M6)
+// DownloadManager on NodeHost's BitTorrent client. Shared by --console and
+// tui so the two commands' setup can't drift apart.
+//
+// Unlike the pre-M6 SpiderPipeline this replaces, NodeHost/mesh/downloads
+// start regardless of cfg.spider -- downloads need the BitTorrent client
+// independent of whether DHT-crawl discovery is enabled (docs/M6-PLAN.md
+// item 1, mirroring Qt's application.cpp: transport always starts, only the
+// crawler is gated). Only `crawler` stays null when cfg.spider is off. On a
+// node start failure, prints the same diagnostic --console has always
+// printed and leaves nodeHost/crawler/replication/peerApi/downloads unable
+// to do anything (downloads reports "not ready", same as the mesh already
+// did) -- the pipeline degrades to index-only rather than failing the whole
+// command.
+struct EnginePipeline {
     std::unique_ptr<ratsn::engine::NodeHost> nodeHost;
-    std::unique_ptr<ratsn::engine::Crawler> crawler;
     std::unique_ptr<ratsn::engine::Indexer> indexer;
+    std::unique_ptr<ratsn::engine::Crawler> crawler;
     std::unique_ptr<ratsn::engine::Replication> replication;
     std::unique_ptr<ratsn::engine::PeerApi> peerApi;
+    std::unique_ptr<ratsn::engine::DownloadManager> downloads;
 };
 
-SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
+EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
 {
-    SpiderPipeline p;
-    if (!cfg.spider)
-        return p;
+    EnginePipeline p;
 
     p.indexer = std::make_unique<ratsn::engine::Indexer>(
         index, filterSettingsFromConfig(cfg), loop, cfg.indexMaxTorrents);
 
     p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir, loop, kClientVersion);
     if (!p.nodeHost->start()) {
-        std::cerr << "ratsn: failed to start node/DHT; spider disabled\n";
+        std::cerr << "ratsn: failed to start node/DHT; spider/mesh/downloads disabled\n";
         p.nodeHost.reset();
+        p.downloads = std::make_unique<ratsn::engine::DownloadManager>(nullptr, loop, resolveDownloadPath(cfg, dataDir));
         return p;
     }
 
-    p.crawler = std::make_unique<ratsn::engine::Crawler>(p.nodeHost->bittorrent(), loop);
-    p.crawler->setWalkInterval(cfg.walkInterval);
-    ratsn::engine::Indexer* indexerPtr = p.indexer.get();
-    p.crawler->setKnownHashFilter([indexerPtr](const std::string& hash) { return indexerPtr->isKnownHash(hash); });
-    p.crawler->setDiscoveredCallback([indexerPtr](const Torrent& t) { indexerPtr->handleDiscovered(t); });
-    if (!p.crawler->start()) {
-        std::cerr << "ratsn: failed to start crawler\n";
-        p.crawler.reset();
+    if (cfg.spider) {
+        p.crawler = std::make_unique<ratsn::engine::Crawler>(p.nodeHost->bittorrent(), loop);
+        p.crawler->setWalkInterval(cfg.walkInterval);
+        ratsn::engine::Indexer* indexerPtr = p.indexer.get();
+        p.crawler->setKnownHashFilter([indexerPtr](const std::string& hash) { return indexerPtr->isKnownHash(hash); });
+        p.crawler->setDiscoveredCallback([indexerPtr](const Torrent& t) { indexerPtr->handleDiscovered(t); });
+        if (!p.crawler->start()) {
+            std::cerr << "ratsn: failed to start crawler\n";
+            p.crawler.reset();
+        }
     }
 
     // Mesh: peer_api handlers + replication ask-loop (M4). messageJson() is
@@ -224,16 +255,22 @@ SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::pat
         }
     }
 
+    // Downloads (M6): needs only the BitTorrent client, independent of
+    // spider/mesh -- guards its own operations on nodeHost->bittorrent()
+    // being available.
+    p.downloads = std::make_unique<ratsn::engine::DownloadManager>(
+        p.nodeHost.get(), loop, resolveDownloadPath(cfg, dataDir));
+
     return p;
 }
 
 // Debug-only localhost pairing (docs/M4-PLAN.md): parses "host:port" and
 // dials it directly, bypassing DHT/PEX discovery. No-op (with a diagnostic)
 // if the mesh isn't up or the target is malformed.
-void connectDebugPeer(const SpiderPipeline& pipeline, const std::string& target)
+void connectDebugPeer(const EnginePipeline& pipeline, const std::string& target)
 {
     if (!pipeline.nodeHost) {
-        std::cerr << "ratsn: --connect requires the spider/mesh to be enabled\n";
+        std::cerr << "ratsn: --connect requires the node to be running (see the startup error above)\n";
         return;
     }
     const size_t colon = target.rfind(':');
@@ -281,25 +318,35 @@ int cmdConsole(std::vector<std::string> args)
     std::signal(SIGINT, handleSigint);
     std::signal(SIGTERM, handleSigint);
 
-    SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
+    EnginePipeline pipeline = startEnginePipeline(cfg, dataDir, *index, loop);
 
     std::string connectTarget;
     if (nextFlagValue(args, "--connect", connectTarget))
         connectDebugPeer(pipeline, connectTarget);
+
+    // Restore any in-progress downloads (mirrors application.cpp:252, run
+    // after the pipeline/transport is up). loadSession/start no-op cleanly
+    // when the BitTorrent client isn't available (nodeHost start failed).
+    const std::filesystem::path sessionFile = ratsn::platform::downloadsFile(dataDir);
+    pipeline.downloads->loadSession(sessionFile.string());
+    pipeline.downloads->start(sessionFile.string());
 
     const auto stats = index->counts();
     std::cout << "ratsn --console: data dir " << dataDir.string() << ", fileIndex=" << (cfg.fileIndex ? "on" : "off")
                << ", spider=" << (pipeline.crawler ? "on" : "off")
                << "\nindexed " << stats.torrents << " torrents, " << stats.files << " files. Ctrl-C to exit.\n";
 
-    StatsPrinter statsPrinter(loop, *index, pipeline.crawler.get(), pipeline.nodeHost.get());
-    if (pipeline.crawler)
-        statsPrinter.start(5000);
+    StatsPrinter statsPrinter(loop, *index, pipeline.crawler.get(), pipeline.nodeHost.get(), pipeline.downloads.get());
+    statsPrinter.start(5000);
 
     loop.run();
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
+    // Downloads save before the node (its BitTorrent client) stops --
+    // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
+    pipeline.downloads->stop();
+    pipeline.downloads->saveSession(sessionFile.string());
     if (pipeline.nodeHost)
         pipeline.nodeHost->stop();
 
@@ -338,11 +385,18 @@ int cmdTui(std::vector<std::string> args)
     std::signal(SIGINT, handleSigint);
     std::signal(SIGTERM, handleSigint);
 
-    SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
+    EnginePipeline pipeline = startEnginePipeline(cfg, dataDir, *index, loop);
 
     std::string connectTarget;
     if (nextFlagValue(args, "--connect", connectTarget))
         connectDebugPeer(pipeline, connectTarget);
+
+    // Restore any in-progress downloads (mirrors application.cpp:252, run
+    // after the pipeline/transport is up). loadSession/start no-op cleanly
+    // when the BitTorrent client isn't available (nodeHost start failed).
+    const std::filesystem::path sessionFile = ratsn::platform::downloadsFile(dataDir);
+    pipeline.downloads->loadSession(sessionFile.string());
+    pipeline.downloads->start(sessionFile.string());
 
     ratsn::tui::StatusInfo info;
     info.dataDir = dataDir.string();
@@ -355,11 +409,15 @@ int cmdTui(std::vector<std::string> args)
 
     std::thread engineThread([&loop] { loop.run(); });
     // Stops and joins engineThread itself before returning -- see tui/app.cpp.
-    ratsn::tui::run(
-        loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(), cfg, info);
+    ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(),
+        pipeline.downloads.get(), cfg, info);
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
+    // Downloads save before the node (its BitTorrent client) stops --
+    // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
+    pipeline.downloads->stop();
+    pipeline.downloads->saveSession(sessionFile.string());
     if (pipeline.nodeHost)
         pipeline.nodeHost->stop();
 
@@ -729,7 +787,7 @@ void printUsage()
                  "commands:\n"
                  "  --console [--connect HOST:PORT]   run the engine loop until Ctrl-C\n"
 #ifdef RATSN_WITH_TUI
-                 "  --tui [--connect HOST:PORT]       interactive terminal UI (search/status) on the live index\n"
+                 "  --tui [--connect HOST:PORT]       interactive terminal UI (search/downloads/status) on the live index\n"
 #endif
                  "  search <query>       query the local index\n"
                  "  add <file.json...>   hand-load one or more torrent JSON records\n"

@@ -16,6 +16,7 @@
 
 namespace ratsn::engine {
 class NodeHost;
+class DownloadManager;
 }
 
 // The Top tab (docs/M5-PLAN.md item 5): content-type + time-window toggles
@@ -28,10 +29,11 @@ class TopTab {
 public:
     // index is confined to the EngineLoop thread (§3); engineLoop/screen are
     // the UI<->engine bridge. nodeHost/dataDir are forwarded to ResultView
-    // for the 't' save-.torrent flow (item 6). All borrowed pointers must
+    // for the 't' save-.torrent flow (item 6); downloads for the 'd'
+    // download flow (docs/M6-PLAN.md item 5). All borrowed pointers must
     // outlive this object.
     TopTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
-        engine::NodeHost* nodeHost, std::string dataDir);
+        engine::NodeHost* nodeHost, engine::DownloadManager* downloads, std::string dataDir);
 
     ftxui::Component component();
 

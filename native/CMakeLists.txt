@@ -98,6 +98,8 @@ add_library(ratsn_core STATIC
     index/groonga_index.cpp
     engine/node_host.cpp
     engine/crawler.cpp
+    engine/downloads.cpp
+    engine/session_store.cpp
     engine/indexer.cpp
     engine/peer_registry.cpp
     engine/peer_api.cpp
@@ -129,6 +131,7 @@ if(RATSN_WITH_TUI)
         tui/app.cpp
         tui/search_tab.cpp
         tui/top_tab.cpp
+        tui/downloads_tab.cpp
         tui/result_view.cpp
         tui/status_bar.cpp
     )

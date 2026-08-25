@@ -1,6 +1,7 @@
 #include "tui/result_view.h"
 
 #include "domain/content.h"
+#include "engine/downloads.h"
 #include "engine/node_host.h"
 #include "engine/torrent_file.h"
 #include "platform/log.h"
@@ -18,11 +19,12 @@ using namespace ftxui;
 
 namespace ratsn::tui {
 
-ResultView::ResultView(
-    platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost, std::string dataDir)
+ResultView::ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
+    engine::DownloadManager* downloads, std::string dataDir)
     : engineLoop_(engineLoop)
     , screen_(screen)
     , nodeHost_(nodeHost)
+    , downloads_(downloads)
     , dataDir_(std::move(dataDir))
 {
 }
@@ -167,7 +169,37 @@ bool ResultView::handleKey(ftxui::Event event)
         handleSaveTorrent();
         return true;
     }
+    if (event == Event::Character('d')) {
+        handleDownload();
+        return true;
+    }
     return false;
+}
+
+void ResultView::handleDownload()
+{
+    const domain::Torrent info = results_[static_cast<size_t>(selected_)].torrent;
+
+    if (!downloads_) {
+        statusMessage_ = "download failed: bittorrent not available (spider/mesh disabled)";
+        return;
+    }
+
+    statusMessage_ = "starting download: " + (info.name.empty() ? info.hash : info.name);
+    platform::log() << "ResultView: download requested for " << info.hash.substr(0, 8) << "\n";
+
+    // addWithInfo mutates DownloadManager's registry, which is confined to
+    // the EngineLoop thread (docs/M6-PLAN.md item 2) -- posted there, same
+    // as every other engine call this view makes (see handleSaveTorrent).
+    engine::DownloadManager* downloads = downloads_;
+    engineLoop_.post([this, downloads, info] {
+        const bool ok = downloads->addWithInfo(info);
+        const std::string hash = info.hash;
+        screen_.Post([this, ok, hash] {
+            statusMessage_
+                = ok ? ("downloading: " + hash.substr(0, 8) + "...") : ("already downloading: " + hash.substr(0, 8) + "...");
+        });
+    });
 }
 
 void ResultView::handleSaveTorrent()

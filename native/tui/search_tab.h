@@ -18,6 +18,7 @@
 namespace ratsn::engine {
 class PeerApi;
 class NodeHost;
+class DownloadManager;
 }
 
 // The Search tab (docs/DESIGN-native.md §7): a debounced search-as-you-type
@@ -33,11 +34,14 @@ public:
     // the spider/mesh is disabled): when present, every search also fans out
     // to connected peers (docs/M4-PLAN.md "Remote search merge"). nodeHost is
     // borrowed and nullable, forwarded to ResultView for the 't' save-.torrent
-    // flow (item 6). cfg supplies the strict/safe-search defaults (item 1);
-    // dataDir is ResultView's .torrent cache directory. All borrowed pointers
-    // must outlive this object.
+    // flow (item 6). downloads is borrowed and nullable, forwarded to
+    // ResultView for the 'd' download flow (docs/M6-PLAN.md item 5). cfg
+    // supplies the strict/safe-search defaults (item 1); dataDir is
+    // ResultView's .torrent cache directory. All borrowed pointers must
+    // outlive this object.
     SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
-        engine::PeerApi* peerApi, engine::NodeHost* nodeHost, const platform::Config& cfg, std::string dataDir);
+        engine::PeerApi* peerApi, engine::NodeHost* nodeHost, engine::DownloadManager* downloads,
+        const platform::Config& cfg, std::string dataDir);
 
     // Builds (once) and returns the tab's root component.
     ftxui::Component component();

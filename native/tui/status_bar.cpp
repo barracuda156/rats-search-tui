@@ -17,6 +17,12 @@ Element labeled(const std::string& label, const std::string& value)
 
 Element renderStatusBar(const StatusModel& model)
 {
+    // The completion flash replaces the bar's own line rather than sharing
+    // it (it would otherwise be squeezed illegibly among five other
+    // fields) -- expires itself by deadline, see StatusModel's comment.
+    if (!model.downloadFlash.empty() && std::chrono::steady_clock::now() < model.downloadFlashUntil)
+        return text(model.downloadFlash) | color(Color::Green);
+
     return hbox({
                text("indexed " + std::to_string(model.indexStats.torrents) + " torrents ("
                    + humanSize(model.indexStats.totalSize) + ")"),
@@ -27,6 +33,8 @@ Element renderStatusBar(const StatusModel& model)
                text("spider pool=" + std::to_string(model.spiderPool) + " visited=" + std::to_string(model.spiderVisited)),
                text("  ·  "),
                text("discovered=" + std::to_string(model.discovered) + " fetching=" + std::to_string(model.activeFetches)),
+               text("  ·  "),
+               text("dl:" + std::to_string(model.dlActive) + " " + humanSize(static_cast<int64_t>(model.dlSpeed)) + "/s"),
            })
         | dim;
 }

@@ -36,7 +36,7 @@ std::filesystem::path configFile(const std::filesystem::path& data_dir)
 
 std::filesystem::path downloadsFile(const std::filesystem::path& data_dir)
 {
-    return data_dir / "downloads.json";
+    return data_dir / "torrents_session.json";
 }
 
 } // namespace ratsn::platform

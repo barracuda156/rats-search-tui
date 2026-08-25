@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/crawler.h"
+#include "engine/downloads.h"
 #include "engine/node_host.h"
 #include "engine/peer_api.h"
 #include "index/search_index.h"
@@ -24,12 +25,13 @@ namespace ratsn::tui {
 // not join engineThread itself (this function already did; see app.cpp for
 // why that ordering, not the caller doing it, is what keeps this safe).
 // `engineLoop` must already be running on `engineThread` when this is
-// called. index, nodeHost, crawler and peerApi are borrowed and must outlive
-// this call; nodeHost/crawler/peerApi are null when the spider/mesh is
-// disabled (see main.cpp's SpiderPipeline). cfg supplies the Search tab's
-// strict/safe-search defaults (docs/M5-PLAN.md item 1).
+// called. index, nodeHost, crawler, peerApi and downloads are borrowed and
+// must outlive this call; nodeHost/crawler/peerApi are null when the
+// spider/mesh is disabled, downloads is null when the BitTorrent client
+// never came up (see main.cpp's EnginePipeline). cfg supplies the Search
+// tab's strict/safe-search defaults (docs/M5-PLAN.md item 1).
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
-    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const platform::Config& cfg,
-    const StatusInfo& info);
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, engine::DownloadManager* downloads,
+    const platform::Config& cfg, const StatusInfo& info);
 
 } // namespace ratsn::tui

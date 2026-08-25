@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/crawler.h"
+#include "engine/downloads.h"
 #include "engine/node_host.h"
 #include "index/search_index.h"
 #include "platform/engine_loop.h"
@@ -8,6 +9,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 
@@ -29,6 +31,23 @@ struct StatusModel {
     size_t spiderVisited = 0;
     int discovered = 0;
     int activeFetches = 0;
+
+    // Downloads (M6): active-download count + aggregate speed, refreshed by
+    // StatusUpdater like everything else above.
+    int dlActive = 0;
+    double dlSpeed = 0.0;
+
+    // A transient "download completed" flash (docs/M6-PLAN.md item 2's
+    // "optional completion callback for the status-bar flash"), set by
+    // app.cpp's DownloadManager::setCompletionCallback registration.
+    // downloadFlashUntil is a deadline rather than a tick countdown so
+    // renderStatusBar (called on every UI redraw) can expire it itself --
+    // StatusModel is otherwise only ever touched inside a
+    // ScreenInteractive::Post callback (see the struct comment above), and a
+    // countdown decremented from StatusUpdater's engine-thread tick() would
+    // violate that.
+    std::string downloadFlash;
+    std::chrono::steady_clock::time_point downloadFlashUntil {};
 };
 
 // Values that don't change over the run, unlike StatusModel.
@@ -51,11 +70,13 @@ struct StatusInfo {
 class StatusUpdater {
 public:
     StatusUpdater(platform::EngineLoop& loop, index::SearchIndex& index, engine::NodeHost* nodeHost,
-        engine::Crawler* crawler, ftxui::ScreenInteractive& screen, StatusModel& model)
+        engine::Crawler* crawler, engine::DownloadManager* downloads, ftxui::ScreenInteractive& screen,
+        StatusModel& model)
         : loop_(loop)
         , index_(index)
         , nodeHost_(nodeHost)
         , crawler_(crawler)
+        , downloads_(downloads)
         , screen_(screen)
         , model_(model)
     {
@@ -87,7 +108,22 @@ private:
             snapshot.discovered = crawler_->discoveredCount();
             snapshot.activeFetches = crawler_->activeFetches();
         }
-        screen_.Post([this, snapshot] { model_ = snapshot; });
+        if (downloads_) {
+            const auto agg = downloads_->aggregate();
+            snapshot.dlActive = agg.active;
+            snapshot.dlSpeed = agg.downloadSpeed;
+        }
+        screen_.Post([this, snapshot] {
+            // snapshot carries none of the completion flash's state (it's
+            // set independently by DownloadManager::setCompletionCallback's
+            // own screen_.Post, between ticks) -- preserve it across this
+            // wholesale replace instead of dropping whatever flash is live.
+            const std::string flash = model_.downloadFlash;
+            const auto flashUntil = model_.downloadFlashUntil;
+            model_ = snapshot;
+            model_.downloadFlash = flash;
+            model_.downloadFlashUntil = flashUntil;
+        });
 
         schedule();
     }
@@ -96,6 +132,7 @@ private:
     index::SearchIndex& index_;
     engine::NodeHost* nodeHost_;
     engine::Crawler* crawler_;
+    engine::DownloadManager* downloads_;
     ftxui::ScreenInteractive& screen_;
     StatusModel& model_;
     int intervalMs_ = 1000;

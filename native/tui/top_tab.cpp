@@ -16,11 +16,11 @@ constexpr const char* kTimeValues[] = { "", "hours", "week", "month" };
 } // namespace
 
 TopTab::TopTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
-    engine::NodeHost* nodeHost, std::string dataDir)
+    engine::NodeHost* nodeHost, engine::DownloadManager* downloads, std::string dataDir)
     : engineLoop_(engineLoop)
     , index_(index)
     , screen_(screen)
-    , resultView_(engineLoop, screen, nodeHost, std::move(dataDir))
+    , resultView_(engineLoop, screen, nodeHost, downloads, std::move(dataDir))
 {
 }
 

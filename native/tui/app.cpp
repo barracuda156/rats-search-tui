@@ -1,5 +1,6 @@
 #include "tui/app.h"
 
+#include "tui/downloads_tab.h"
 #include "tui/search_tab.h"
 #include "tui/top_tab.h"
 
@@ -33,17 +34,18 @@ Element renderTabBar(int tabIndex)
     return hbox({
         label(0, "Search"),
         label(1, "Top"),
-        label(2, "Status"),
+        label(2, "Downloads"),
+        label(3, "Status"),
         filler(),
-        text(" Tab: switch tab   /: search   q: quit ") | dim,
+        text(" Tab: switch tab   /: search   d: download   q: quit ") | dim,
     });
 }
 
 } // namespace
 
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
-    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const platform::Config& cfg,
-    const StatusInfo& info)
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, engine::DownloadManager* downloads,
+    const platform::Config& cfg, const StatusInfo& info)
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
@@ -94,22 +96,41 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     ScreenInteractive screen = ScreenInteractive::Fullscreen();
 
     StatusModel statusModel;
-    StatusUpdater statusUpdater(engineLoop, index, nodeHost, crawler, screen, statusModel);
+    StatusUpdater statusUpdater(engineLoop, index, nodeHost, crawler, downloads, screen, statusModel);
 
-    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, cfg, info.dataDir);
+    // A download completing flashes the status bar (docs/M6-PLAN.md item 2's
+    // "optional completion callback"); fires on the EngineLoop thread, so
+    // marshal before touching statusModel (same idiom as every other
+    // engine->UI callback in this file).
+    if (downloads) {
+        downloads->setCompletionCallback([&screen, &statusModel](const std::string&, const std::string& name) {
+            screen.Post([&statusModel, name] {
+                statusModel.downloadFlash = "download completed: " + name;
+                statusModel.downloadFlashUntil = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+            });
+        });
+    }
+
+    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, downloads, cfg, info.dataDir);
     Component searchComponent = searchTab.component();
-    TopTab topTab(engineLoop, index, screen, nodeHost, info.dataDir);
+    TopTab topTab(engineLoop, index, screen, nodeHost, downloads, info.dataDir);
     Component topComponent = topTab.component();
+    DownloadsTab downloadsTab(engineLoop, screen, downloads);
+    Component downloadsComponent = downloadsTab.component();
     Component statusComponent = Renderer([&statusModel, &info] { return renderStatusTab(statusModel, info); });
 
     int tabIndex = 0;
     int priorTabIndex = 0;
-    Component tabContent = Container::Tab({ searchComponent, topComponent, statusComponent }, &tabIndex);
+    Component tabContent
+        = Container::Tab({ searchComponent, topComponent, downloadsComponent, statusComponent }, &tabIndex);
     // Reload the Top tab's list on activation (docs/M5-PLAN.md item 5: "no
     // polling") -- Container::Tab has no activation callback of its own, so
     // this is checked once per frame in the top-level Renderer below instead.
+    // The Downloads tab needs no such hook: it polls on its own 1s timer
+    // regardless of which tab is visible (docs/M6-PLAN.md item 5), started
+    // once below alongside statusUpdater.
 
-    constexpr int kTabCount = 3;
+    constexpr int kTabCount = 4;
     Component layout = Renderer(tabContent, [&] {
         if (tabIndex != priorTabIndex) {
             if (tabIndex == 1)
@@ -145,7 +166,7 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
             searchTab.focusInput();
             return true;
         }
-        if (event == Event::Character('q') && !searchTab.anyInputFocused()) {
+        if (event == Event::Character('q') && !searchTab.anyInputFocused() && !downloadsTab.inputFocused()) {
             screen.ExitLoopClosure()();
             return true;
         }
@@ -175,6 +196,7 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     });
 
     statusUpdater.start();
+    downloadsTab.start();
     screen.Loop(layout);
 
     uiActive.store(false, std::memory_order_relaxed);

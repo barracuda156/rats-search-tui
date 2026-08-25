@@ -13,6 +13,7 @@
 
 namespace ratsn::engine {
 class NodeHost;
+class DownloadManager;
 }
 
 // Result-list + details-pane rendering shared by the Search and Top tabs
@@ -29,9 +30,11 @@ public:
     // nullable (null when the spider/mesh is disabled -- 't' then always
     // reports "not available", same as TorrentExporter's isReady() check in
     // the Qt app). dataDir is where "<dataDir>/torrents/<hash>.torrent" is
-    // cached/read (mirrors TorrentExporter's cache layout).
+    // cached/read (mirrors TorrentExporter's cache layout). downloads is
+    // borrowed and nullable (null when the BitTorrent client never came up
+    // -- 'd' then always reports "not available", docs/M6-PLAN.md item 5).
     ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
-        std::string dataDir);
+        engine::DownloadManager* downloads, std::string dataDir);
 
     // Replaces the whole result set (a fresh search/top query). UI-thread
     // only (see the .cpp -- mirrors the old SearchTab::applyResults).
@@ -49,19 +52,21 @@ public:
     // as its own line) the statusMessage_ status line.
     ftxui::Element renderPane(const ftxui::Component& menuComponent) const;
 
-    // 'm'/'t' handling (docs/M5-PLAN.md items 5/6); returns true if the event
-    // was consumed. The caller's own CatchEvent should apply its focus guard
-    // first, then delegate here.
+    // 'm'/'t'/'d' handling (docs/M5-PLAN.md items 5/6, docs/M6-PLAN.md item
+    // 5); returns true if the event was consumed. The caller's own
+    // CatchEvent should apply its focus guard first, then delegate here.
     bool handleKey(ftxui::Event event);
 
 private:
     ftxui::Element renderDetails() const;
     std::string formatResultLine(const domain::SearchHit& hit) const;
     void handleSaveTorrent();
+    void handleDownload();
 
     platform::EngineLoop& engineLoop_;
     ftxui::ScreenInteractive& screen_;
     engine::NodeHost* nodeHost_;
+    engine::DownloadManager* downloads_;
     std::string dataDir_;
 
     std::vector<domain::SearchHit> results_;
