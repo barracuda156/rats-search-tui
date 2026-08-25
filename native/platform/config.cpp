@@ -2,12 +2,16 @@
 
 #include "librats/util/json.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
 namespace ratsn::platform {
 
 namespace {
+
+constexpr int kMinMaxPeers = 10;
+constexpr int kMaxMaxPeers = 1000;
 
 librats::Json filtersToJson(const FilterConfig& f)
 {
@@ -58,9 +62,20 @@ Config Config::load(const std::filesystem::path& path)
     cfg.dhtPort = j.value("dhtPort", cfg.dhtPort);
     cfg.upnp = j.value("upnp", cfg.upnp);
     cfg.holePunch = j.value("holePunch", cfg.holePunch);
+    cfg.p2pPort = j.value("p2pPort", cfg.p2pPort);
+    cfg.maxPeers = j.value("p2pConnections", cfg.maxPeers);
+    cfg.p2pReplication = j.value("p2pReplication", cfg.p2pReplication);
+    cfg.p2pReplicationServer = j.value("p2pReplicationServer", cfg.p2pReplicationServer);
     cfg.downloadPath = j.value("downloadPath", cfg.downloadPath);
     cfg.safeSearch = j.value("safeSearch", cfg.safeSearch);
     cfg.fileIndex = j.value("fileIndex", cfg.fileIndex);
+
+    // Same clamp/repair rules as Qt's ConfigStore::validateAndClamp: an
+    // out-of-range or hand-edited-inconsistent value must never reach the
+    // services.
+    cfg.maxPeers = std::clamp(cfg.maxPeers, kMinMaxPeers, kMaxMaxPeers);
+    if (cfg.p2pReplication && !cfg.p2pReplicationServer)
+        cfg.p2pReplicationServer = true;
 
     if (const librats::Json* trackers = j.as_object().find("trackers"); trackers && trackers->is_array()) {
         cfg.trackers.clear();
@@ -82,6 +97,10 @@ bool Config::save(const std::filesystem::path& path) const
     j["dhtPort"] = dhtPort;
     j["upnp"] = upnp;
     j["holePunch"] = holePunch;
+    j["p2pPort"] = p2pPort;
+    j["p2pConnections"] = maxPeers;
+    j["p2pReplication"] = p2pReplication;
+    j["p2pReplicationServer"] = p2pReplicationServer;
     j["downloadPath"] = downloadPath;
     j["safeSearch"] = safeSearch;
     j["fileIndex"] = fileIndex;

@@ -20,8 +20,12 @@ public:
     // Classify, filter, and upsert if accepted. Logs the rejection reason (or
     // the successful insert) to stdout -- the explicit acceptance signal for
     // filtering per docs/DESIGN-native.md §12 ("filters demonstrably drop
-    // (log line) rejected torrents").
-    void handleDiscovered(domain::Torrent torrent);
+    // (log line) rejected torrents"). Returns true only when the torrent was
+    // genuinely new and got inserted -- false for a filtered-out, duplicate
+    // (hash already indexed), or unindexable torrent. PeerApi (M4) uses this
+    // to decide whether an inbound torrent counts toward replication
+    // accounting.
+    bool handleDiscovered(domain::Torrent torrent);
 
     // Crawler::KnownHashFilter-compatible: true if `hashHex` is already indexed.
     bool isKnownHash(const std::string& hashHex);

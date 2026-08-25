@@ -2,6 +2,7 @@
 
 #include "engine/crawler.h"
 #include "engine/node_host.h"
+#include "engine/peer_api.h"
 #include "index/search_index.h"
 #include "platform/engine_loop.h"
 #include "tui/status_bar.h"
@@ -21,9 +22,10 @@ namespace ratsn::tui {
 // not join engineThread itself (this function already did; see app.cpp for
 // why that ordering, not the caller doing it, is what keeps this safe).
 // `engineLoop` must already be running on `engineThread` when this is
-// called. index, nodeHost and crawler are borrowed and must outlive this
-// call.
+// called. index, nodeHost, crawler and peerApi are borrowed and must outlive
+// this call; nodeHost/crawler/peerApi are null when the spider/mesh is
+// disabled (see main.cpp's SpiderPipeline).
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
-    engine::NodeHost* nodeHost, engine::Crawler* crawler, const StatusInfo& info);
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const StatusInfo& info);
 
 } // namespace ratsn::tui

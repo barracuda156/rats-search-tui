@@ -2,6 +2,9 @@
 #include "engine/crawler.h"
 #include "engine/indexer.h"
 #include "engine/node_host.h"
+#include "engine/peer_api.h"
+#include "engine/peer_registry.h"
+#include "engine/replication.h"
 #include "index/groonga_index.h"
 #include "platform/config.h"
 #include "platform/engine_loop.h"
@@ -12,6 +15,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -67,7 +71,7 @@ private:
             std::cout << " discovered=" << crawler_->discoveredCount() << " activeFetches=" << crawler_->activeFetches();
         if (nodeHost_) {
             std::cout << " dhtNodes=" << nodeHost_->dhtNodeCount() << " spiderPool=" << nodeHost_->spiderPoolSize()
-                       << " spiderVisited=" << nodeHost_->spiderVisitedCount();
+                       << " spiderVisited=" << nodeHost_->spiderVisitedCount() << " peers=" << nodeHost_->peerCount();
         }
         std::cout << "\n";
         schedule();
@@ -128,17 +132,24 @@ std::unique_ptr<GroongaIndex> openIndex(const std::filesystem::path& dataDir, st
     return GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, error);
 }
 
-// NodeHost (DHT + BitTorrent subsystems) -> Crawler (discovery + BEP9
-// metadata) -> Indexer (classify -> filter -> upsert), shared by --console
-// and tui so the two commands' spider setup can't drift apart. Empty
-// (all-null) when cfg.spider is off. On a node/crawler start failure, prints
-// the same diagnostic --console has always printed and leaves the
-// corresponding member null -- the pipeline degrades to index-only rather
-// than failing the whole command.
+// Client version advertised to peers in the client_info handshake
+// (PeerRegistry); RATSN_VERSION is a CMake compile definition (native/CMakeLists.txt).
+constexpr const char* kClientVersion = "ratsn/" RATSN_VERSION;
+
+// NodeHost (DHT + BitTorrent + P2P mesh) -> Crawler (discovery + BEP9
+// metadata) -> Indexer (classify -> filter -> upsert), plus the M4 mesh
+// pieces (PeerApi, Replication) layered on NodeHost's MessageJson. Shared by
+// --console and tui so the two commands' spider/mesh setup can't drift
+// apart. Empty (all-null) when cfg.spider is off. On a node/crawler start
+// failure, prints the same diagnostic --console has always printed and
+// leaves the corresponding member null -- the pipeline degrades to
+// index-only rather than failing the whole command.
 struct SpiderPipeline {
     std::unique_ptr<ratsn::engine::NodeHost> nodeHost;
     std::unique_ptr<ratsn::engine::Crawler> crawler;
     std::unique_ptr<ratsn::engine::Indexer> indexer;
+    std::unique_ptr<ratsn::engine::Replication> replication;
+    std::unique_ptr<ratsn::engine::PeerApi> peerApi;
 };
 
 SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
@@ -157,7 +168,7 @@ SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::pat
     filterSettings.contentTypeFilter = cfg.filters.contentType;
     p.indexer = std::make_unique<ratsn::engine::Indexer>(index, std::move(filterSettings));
 
-    p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir);
+    p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir, loop, kClientVersion);
     if (!p.nodeHost->start()) {
         std::cerr << "ratsn: failed to start node/DHT; spider disabled\n";
         p.nodeHost.reset();
@@ -173,7 +184,58 @@ SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::pat
         std::cerr << "ratsn: failed to start crawler\n";
         p.crawler.reset();
     }
+
+    // Mesh: peer_api handlers + replication ask-loop (M4). messageJson() is
+    // only null if node_->start() somehow attached it but the node is not
+    // actually running, which start()'s own failure path above already
+    // ruled out.
+    if (auto* messages = p.nodeHost->messageJson()) {
+        ratsn::engine::NodeHost* nodeHostPtr = p.nodeHost.get();
+        p.replication = std::make_unique<ratsn::engine::Replication>(
+            *messages, loop, [nodeHostPtr] { return nodeHostPtr->peerCount(); });
+        p.replication->setEnabled(cfg.p2pReplication);
+        if (cfg.p2pReplication)
+            p.replication->start();
+
+        p.peerApi = std::make_unique<ratsn::engine::PeerApi>(
+            *messages, index, *p.indexer, loop, p.replication.get(), cfg.p2pReplicationServer);
+        if (std::getenv("RATSN_WIRE_DUMP"))
+            p.peerApi->enableWireDump(dataDir);
+
+        if (ratsn::engine::PeerRegistry* registry = p.nodeHost->peerRegistry()) {
+            ratsn::engine::PeerApi* peerApiPtr = p.peerApi.get();
+            registry->setPeerConnectedCallback(
+                [peerApiPtr](const std::string& peerId) { peerApiPtr->onPeerConnected(peerId); });
+        }
+    }
+
     return p;
+}
+
+// Debug-only localhost pairing (docs/M4-PLAN.md): parses "host:port" and
+// dials it directly, bypassing DHT/PEX discovery. No-op (with a diagnostic)
+// if the mesh isn't up or the target is malformed.
+void connectDebugPeer(const SpiderPipeline& pipeline, const std::string& target)
+{
+    if (!pipeline.nodeHost) {
+        std::cerr << "ratsn: --connect requires the spider/mesh to be enabled\n";
+        return;
+    }
+    const size_t colon = target.rfind(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= target.size()) {
+        std::cerr << "ratsn: invalid --connect target '" << target << "' (expected host:port)\n";
+        return;
+    }
+    const std::string host = target.substr(0, colon);
+    int port = 0;
+    try {
+        port = std::stoi(target.substr(colon + 1));
+    } catch (const std::exception&) {
+        std::cerr << "ratsn: invalid --connect port in '" << target << "'\n";
+        return;
+    }
+    std::cout << "ratsn: connecting to " << host << ":" << port << "\n";
+    pipeline.nodeHost->connectTo(host, static_cast<uint16_t>(port));
 }
 
 void printTorrentLine(const Torrent& t)
@@ -205,6 +267,10 @@ int cmdConsole(std::vector<std::string> args)
     std::signal(SIGTERM, handleSigint);
 
     SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
+
+    std::string connectTarget;
+    if (nextFlagValue(args, "--connect", connectTarget))
+        connectDebugPeer(pipeline, connectTarget);
 
     const auto stats = index->counts();
     std::cout << "ratsn --console: data dir " << dataDir.string() << ", fileIndex=" << (cfg.fileIndex ? "on" : "off")
@@ -259,6 +325,10 @@ int cmdTui(std::vector<std::string> args)
 
     SpiderPipeline pipeline = startSpiderPipeline(cfg, dataDir, *index, loop);
 
+    std::string connectTarget;
+    if (nextFlagValue(args, "--connect", connectTarget))
+        connectDebugPeer(pipeline, connectTarget);
+
     ratsn::tui::StatusInfo info;
     info.dataDir = dataDir.string();
     info.spiderEnabled = static_cast<bool>(pipeline.crawler);
@@ -270,7 +340,7 @@ int cmdTui(std::vector<std::string> args)
 
     std::thread engineThread([&loop] { loop.run(); });
     // Stops and joins engineThread itself before returning -- see tui/app.cpp.
-    ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), info);
+    ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(), info);
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
@@ -437,9 +507,9 @@ void printUsage()
 {
     std::cerr << "usage: ratsn <command> [--data-dir DIR] [options]\n"
                  "commands:\n"
-                 "  --console            run the (currently idle) engine loop until Ctrl-C\n"
+                 "  --console [--connect HOST:PORT]   run the engine loop until Ctrl-C\n"
 #ifdef RATSN_WITH_TUI
-                 "  --tui                interactive terminal UI (search/status) on the live index\n"
+                 "  --tui [--connect HOST:PORT]       interactive terminal UI (search/status) on the live index\n"
 #endif
                  "  search <query>       query the local index\n"
                  "  add <file.json...>   hand-load one or more torrent JSON records\n"

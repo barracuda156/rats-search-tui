@@ -13,6 +13,10 @@
 #include <string>
 #include <vector>
 
+namespace ratsn::engine {
+class PeerApi;
+}
+
 // The Search tab (docs/DESIGN-native.md §7): a debounced search-as-you-type
 // box, a files/names toggle, a sort selector, a selectable results list and
 // a details pane for the current selection.
@@ -21,8 +25,12 @@ namespace ratsn::tui {
 class SearchTab {
 public:
     // index is confined to the EngineLoop thread (§3); engineLoop/screen are
-    // the UI<->engine bridge. All borrowed, must outlive this object.
-    SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen);
+    // the UI<->engine bridge. peerApi is borrowed and nullable (null when
+    // the spider/mesh is disabled): when present, every search also fans out
+    // to connected peers (docs/M4-PLAN.md "Remote search merge"). All
+    // borrowed, must outlive this object.
+    SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
+        engine::PeerApi* peerApi);
 
     // Builds (once) and returns the tab's root component.
     ftxui::Component component();
@@ -39,17 +47,25 @@ private:
     // `generation` no longer matching the live counter means a newer
     // keystroke superseded this result; it's dropped instead of applied.
     void applyResults(uint64_t generation, std::vector<domain::SearchHit> hits);
+    // PeerApi's result callbacks (EngineLoop thread); posts to the UI thread
+    // itself. See the .cpp for the generation/dedup policy.
+    void onRemoteHit(domain::SearchHit hit);
     ftxui::Element renderDetails() const;
     std::string formatResultLine(const domain::SearchHit& hit) const;
 
     platform::EngineLoop& engineLoop_;
     index::SearchIndex& index_;
     ftxui::ScreenInteractive& screen_;
+    engine::PeerApi* peerApi_;
 
     std::string queryText_;
     bool searchFiles_ = false;
     int sortIndex_ = 0;
     std::atomic<uint64_t> generation_ { 0 };
+    // The generation_ value active when the last remote broadcast was sent;
+    // arriving hits are accepted only while it still matches generation_
+    // (see onRemoteHit). EngineLoop-thread only.
+    uint64_t remoteSearchGeneration_ = 0;
 
     std::vector<domain::SearchHit> results_;
     std::vector<std::string> resultLines_; // one preformatted line per result, for Menu

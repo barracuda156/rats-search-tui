@@ -1,8 +1,16 @@
 #include "engine/node_host.h"
 
+#include "engine/peer_registry.h"
+
+#include "librats/nat/port_mapping.h"
 #include "librats/node/node.h"
 #include "librats/subsystems/bittorrent.h"
 #include "librats/subsystems/dht_discovery.h"
+#include "librats/subsystems/hole_punch.h"
+#include "librats/subsystems/message_json.h"
+#include "librats/subsystems/peer_exchange.h"
+#include "librats/subsystems/port_mapping_service.h"
+#include "librats/subsystems/reconnection.h"
 
 #ifndef RATS_SEARCH_FEATURES
 #error "ratsn's crawler (M2) needs librats built with -DRATS_SEARCH_FEATURES=ON. \
@@ -13,9 +21,12 @@ been built with it too."
 
 namespace ratsn::engine {
 
-NodeHost::NodeHost(const platform::Config& cfg, std::filesystem::path dataDir)
+NodeHost::NodeHost(const platform::Config& cfg, std::filesystem::path dataDir, platform::EngineLoop& engineLoop,
+    std::string clientVersion)
     : cfg_(cfg)
     , dataDir_(std::move(dataDir))
+    , engineLoop_(engineLoop)
+    , clientVersion_(std::move(clientVersion))
 {
 }
 
@@ -30,14 +41,11 @@ bool NodeHost::start()
         return true;
 
     librats::NodeConfig config;
-    // No inbound P2P peers expected yet -- M2 attaches neither MessageJson
-    // nor PeerExchange, so there is nothing to dial us for. Ephemeral port
-    // is fine.
-    config.listen_port = 0;
-    config.max_peers = 0;
+    config.listen_port = static_cast<uint16_t>(cfg_.p2pPort);
+    config.max_peers = cfg_.maxPeers > 0 ? static_cast<size_t>(cfg_.maxPeers) : 0;
     // Kept identical to src/net/p2p_transport.cpp's protocol id (version-less
-    // so peers across patch releases meet) even though M2 never joins the
-    // peer mesh -- it also namespaces DhtDiscovery's own discovery hash.
+    // so peers across patch releases meet); also namespaces DhtDiscovery's
+    // own discovery hash.
     config.protocol = "rats-search/3";
     config.data_dir = dataDir_.string();
     config.security = librats::NodeConfig::Security::Noise;
@@ -62,10 +70,59 @@ bool NodeHost::start()
         bittorrent_ = node_->add_subsystem(std::make_unique<librats::Bittorrent>(std::move(btCfg)));
     }
 
+    // Typed JSON messaging: the on()/send() surface PeerApi and Replication
+    // build on.
+    messages_ = node_->add_subsystem(std::make_unique<librats::MessageJson>());
+
+    // Remember + re-dial known peers across restarts.
+    {
+        librats::ReconnectionService::Config rc;
+        rc.store_path = (dataDir_ / "peers.json").string();
+        reconnect_ = node_->add_subsystem(std::make_unique<librats::ReconnectionService>(std::move(rc)));
+    }
+
+    // Automatic NAT port forwarding, gated by config (Qt key: upnp).
+    if (cfg_.upnp) {
+        librats::PortMappingConfig pmCfg;
+        pmCfg.enabled = true;
+        pmCfg.enable_upnp = true;
+        pmCfg.enable_natpmp = true;
+        portMapping_ = node_->add_subsystem(std::make_unique<librats::PortMappingService>(pmCfg));
+    }
+
+    // NAT hole punching, gated by config (Qt key: holePunch). Relaying other
+    // peers' rendezvous is on: a mesh in which nobody relays cannot punch at
+    // all, and one rendezvous costs a few dozen forwarded bytes to a peer we
+    // already hold (matches p2p_transport.cpp).
+    if (cfg_.holePunch) {
+        librats::HolePunch::Config hpCfg;
+        hpCfg.enable_relay = true;
+        holePunch_ = node_->add_subsystem(std::make_unique<librats::HolePunch>(std::move(hpCfg)));
+    }
+
+    // Peer exchange: bounded by the same connection budget as everything
+    // else -- NodeConfig::max_peers only refuses inbound peers, and PEX is
+    // the one discovery source that compounds (matches p2p_transport.cpp).
+    {
+        librats::PeerExchange::Config pexCfg;
+        pexCfg.peer_target = cfg_.maxPeers > 0 ? static_cast<size_t>(cfg_.maxPeers) : 0;
+        pex_ = node_->add_subsystem(std::make_unique<librats::PeerExchange>(std::move(pexCfg)));
+    }
+
+    // client_info handshake: must be wired before node_->start() per
+    // node.h's documented contract on Node::on_peer_connected/disconnected.
+    peerRegistry_ = std::make_unique<PeerRegistry>(*node_, *messages_, engineLoop_, clientVersion_);
+
     if (!node_->start()) {
         node_.reset();
         dht_ = nullptr;
         bittorrent_ = nullptr;
+        messages_ = nullptr;
+        reconnect_ = nullptr;
+        portMapping_ = nullptr;
+        holePunch_ = nullptr;
+        pex_ = nullptr;
+        peerRegistry_.reset();
         return false;
     }
 
@@ -83,6 +140,12 @@ void NodeHost::stop()
     node_.reset();
     dht_ = nullptr;
     bittorrent_ = nullptr;
+    messages_ = nullptr;
+    reconnect_ = nullptr;
+    portMapping_ = nullptr;
+    holePunch_ = nullptr;
+    pex_ = nullptr;
+    peerRegistry_.reset();
     running_ = false;
 }
 
@@ -112,6 +175,22 @@ size_t NodeHost::spiderVisitedCount() const
 std::string NodeHost::nodeIdShort() const
 {
     return node_ ? node_->local_id().short_hex() : std::string();
+}
+
+std::string NodeHost::ourPeerId() const
+{
+    return node_ ? node_->local_id().to_hex() : std::string();
+}
+
+size_t NodeHost::peerCount() const
+{
+    return node_ ? node_->peer_count() : 0;
+}
+
+void NodeHost::connectTo(const std::string& host, uint16_t port)
+{
+    if (node_)
+        node_->connect(host, port);
 }
 
 uint16_t NodeHost::listenPort() const

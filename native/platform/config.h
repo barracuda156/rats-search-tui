@@ -32,11 +32,20 @@ struct Config {
     // tables still pointing at us, and an ephemeral port (set 0 to get one)
     // resets that reputation on every restart.
     int dhtPort = 6881;
-    // Not read anywhere yet: NodeHost attaches neither PortMappingService
-    // nor HolePunch until the mesh subsystems land in M4 (docs/M4-PLAN.md).
-    // Kept so config files written now stay valid then.
+    // Gates NodeHost's PortMappingService/HolePunch subsystems (M4).
     bool upnp = true;
     bool holePunch = true;
+    // Mesh listen port; Qt key "p2pPort". 0 collides with the Qt app's own
+    // default on shared localhost testing -- see docs/M4-PLAN.md.
+    int p2pPort = 4444;
+    // Inbound peer cap; Qt key "p2pConnections" (clamped to [10,1000] there,
+    // same here -- see Config::load).
+    int maxPeers = 10;
+    // Ask connected peers for random torrents on a timer (engine/replication.h).
+    bool p2pReplication = true;
+    // Answer other peers' randomTorrents requests. Qt forces this true
+    // whenever p2pReplication is on (config_store.cpp ~148); same here.
+    bool p2pReplicationServer = true;
     std::string downloadPath;
     std::vector<std::string> trackers;
     FilterConfig filters;

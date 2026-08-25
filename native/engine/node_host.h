@@ -12,23 +12,40 @@ namespace librats {
 class Node;
 class DhtDiscovery;
 class Bittorrent;
+class MessageJson;
+class ReconnectionService;
+class PeerExchange;
+class PortMappingService;
+class HolePunch;
+}
+
+namespace ratsn::platform {
+class EngineLoop;
 }
 
 namespace ratsn::engine {
 
-// Owns the librats Node for the DHT-crawl + BEP9-metadata pipeline (M2).
-// Attaches only DhtDiscovery (real Kademlia/Mainline DHT client) and
-// Bittorrent (spider mode + metadata fetch, delegates to that same DHT).
+class PeerRegistry;
+
+// Owns the librats Node for both the DHT-crawl + BEP9-metadata pipeline (M2)
+// and, as of M4, the P2P mesh: MessageJson (the on()/send() surface PeerApi
+// and Replication build on), ReconnectionService, PeerExchange, and the
+// config-gated PortMappingService/HolePunch. Config values are ported from
+// src/net/p2p_transport.cpp's node setup (see docs/M4-PLAN.md).
 //
-// The P2P *mesh* subsystems -- MdnsDiscovery, MessageJson,
-// PortMappingService, ReconnectionService, PeerExchange, HolePunch,
-// StorageManager -- are M4/M5/M6 concerns (remote search, downloads, votes)
-// and deliberately not attached here; see docs/DESIGN-native.md §4/§10 and
-// the M2 plan. Config values for the two subsystems this does attach are
-// ported from src/net/p2p_transport.cpp's node setup.
+// MdnsDiscovery and StorageManager remain unattached (see
+// docs/DESIGN-native.md §4/§10): LAN discovery isn't needed for M4's
+// acceptance check (a debug --connect flag substitutes, since DHT-based
+// mesh discovery is slow/flaky for a 2-node lab -- see main.cpp), and
+// StorageManager is a genuine M6 (votes) concern.
 class NodeHost {
 public:
-    NodeHost(const platform::Config& cfg, std::filesystem::path dataDir);
+    // engineLoop is borrowed (non-owning) and must outlive this object --
+    // needed to marshal the mesh's peer-connect/client_info callbacks onto
+    // the EngineLoop thread (see PeerRegistry). clientVersion is advertised
+    // to peers in the client_info handshake.
+    NodeHost(const platform::Config& cfg, std::filesystem::path dataDir, platform::EngineLoop& engineLoop,
+        std::string clientVersion);
     ~NodeHost();
 
     NodeHost(const NodeHost&) = delete;
@@ -40,6 +57,17 @@ public:
 
     // Borrowed (non-owning); valid only while running.
     librats::Bittorrent* bittorrent() const { return bittorrent_; }
+    librats::Node* node() const { return node_.get(); }
+    librats::MessageJson* messageJson() const { return messages_; }
+    PeerRegistry* peerRegistry() const { return peerRegistry_.get(); }
+
+    size_t peerCount() const;
+    std::string ourPeerId() const; // full hex; nodeIdShort() below is for display
+
+    // Debug-only localhost pairing (docs/M4-PLAN.md "Localhost acceptance
+    // setup"): dial an explicit peer instead of relying on DHT/PEX discovery.
+    // No-op if not running.
+    void connectTo(const std::string& host, uint16_t port);
 
     bool isDhtRunning() const;
     size_t dhtNodeCount() const;
@@ -63,10 +91,18 @@ public:
 private:
     platform::Config cfg_;
     std::filesystem::path dataDir_;
+    platform::EngineLoop& engineLoop_;
+    std::string clientVersion_;
 
     std::unique_ptr<librats::Node> node_;
     librats::DhtDiscovery* dht_ = nullptr;
     librats::Bittorrent* bittorrent_ = nullptr;
+    librats::MessageJson* messages_ = nullptr;
+    librats::ReconnectionService* reconnect_ = nullptr;
+    librats::PeerExchange* pex_ = nullptr;
+    librats::PortMappingService* portMapping_ = nullptr;
+    librats::HolePunch* holePunch_ = nullptr;
+    std::unique_ptr<PeerRegistry> peerRegistry_;
     bool running_ = false;
 };
 

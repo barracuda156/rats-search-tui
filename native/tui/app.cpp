@@ -37,7 +37,7 @@ Element renderTabBar(int tabIndex)
 } // namespace
 
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
-    engine::NodeHost* nodeHost, engine::Crawler* crawler, const StatusInfo& info)
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const StatusInfo& info)
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
@@ -78,7 +78,7 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     StatusModel statusModel;
     StatusUpdater statusUpdater(engineLoop, index, nodeHost, crawler, screen, statusModel);
 
-    SearchTab searchTab(engineLoop, index, screen);
+    SearchTab searchTab(engineLoop, index, screen, peerApi);
     Component searchComponent = searchTab.component();
     Component statusComponent = Renderer([&statusModel, &info] { return renderStatusTab(statusModel, info); });
 

@@ -1,6 +1,7 @@
 #include "tui/search_tab.h"
 
 #include "domain/content.h"
+#include "engine/peer_api.h"
 #include "tui/format.h"
 
 #include <algorithm>
@@ -15,11 +16,17 @@ const std::vector<std::string> kSortLabels = { "relevance", "seeders", "added", 
 constexpr const char* kSortKeys[] = { "", "seeders", "added", "size", "name" };
 } // namespace
 
-SearchTab::SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen)
+SearchTab::SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
+    engine::PeerApi* peerApi)
     : engineLoop_(engineLoop)
     , index_(index)
     , screen_(screen)
+    , peerApi_(peerApi)
 {
+    if (peerApi_) {
+        peerApi_->setSearchResultCallback([this](const domain::SearchHit& hit) { onRemoteHit(hit); });
+        peerApi_->setFileSearchResultCallback([this](const domain::SearchHit& hit) { onRemoteHit(hit); });
+    }
 }
 
 void SearchTab::focusInput()
@@ -52,15 +59,41 @@ void SearchTab::triggerSearch()
     // 300ms"). A superseded gen means a newer keystroke already fired
     // another one of these -- skip the query entirely rather than just
     // discarding its result, so a burst of keystrokes costs one query, not
-    // one query each.
+    // one query each. The remote fan-out (M4-PLAN "Remote search merge")
+    // rides the same debounce.
     engineLoop_.postDelayed(
         [this, gen, q, files] {
             if (generation_.load(std::memory_order_relaxed) != gen)
                 return;
             std::vector<domain::SearchHit> hits = files ? index_.searchFiles(q) : index_.searchNames(q);
             screen_.Post([this, gen, hits = std::move(hits)]() mutable { applyResults(gen, std::move(hits)); });
+
+            if (peerApi_) {
+                remoteSearchGeneration_ = gen;
+                peerApi_->broadcastSearch(q.text, q.limit, q.sort, q.descending, q.safeSearch, q.contentType, files);
+            }
         },
         300);
+}
+
+void SearchTab::onRemoteHit(domain::SearchHit hit)
+{
+    // No correlation id on the wire (peer_api.cpp) -- a hit is accepted only
+    // if no newer local query has started since we last broadcast one.
+    const uint64_t gen = remoteSearchGeneration_;
+    if (generation_.load(std::memory_order_relaxed) != gen)
+        return;
+
+    screen_.Post([this, gen, hit = std::move(hit)] {
+        if (generation_.load(std::memory_order_relaxed) != gen)
+            return;
+        for (const domain::SearchHit& existing : results_) {
+            if (existing.torrent.hash == hit.torrent.hash)
+                return; // dedup by hash against hits already shown
+        }
+        results_.push_back(hit);
+        resultLines_.push_back(formatResultLine(hit));
+    });
 }
 
 void SearchTab::applyResults(uint64_t generation, std::vector<domain::SearchHit> hits)

@@ -10,6 +10,10 @@ endif()
 
 option(RATSN_WITH_TUI "Build the FTXUI terminal UI (native/tui/*)" ON)
 option(RATSN_FILE_INDEX_DEFAULT "Default value of the fileIndex config key" ON)
+# Golden-file wire-compat tests (native/tests/); OFF by default -- nothing new
+# to port to the retro target, only enabled when actively verifying the M4
+# peer_api codec against fixtures captured from a live Qt instance.
+option(RATSN_BUILD_TESTS "Build native/tests (golden-file wire-compat checks)" OFF)
 # Default ON: link an already-installed librats (e.g. the packaged MacPorts
 # port) via find_package() instead of compiling src/librats from the
 # vendored submodule on every build -- meaningfully cheaper on constrained
@@ -94,6 +98,9 @@ add_library(ratsn_core STATIC
     engine/node_host.cpp
     engine/crawler.cpp
     engine/indexer.cpp
+    engine/peer_registry.cpp
+    engine/peer_api.cpp
+    engine/replication.cpp
 )
 target_include_directories(ratsn_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${RATSN_GENERATED_DIR})
 target_link_libraries(ratsn_core PUBLIC ${RATSN_LIBRATS_TARGET} PkgConfig::GROONGA PkgConfig::PCRE2)
@@ -102,6 +109,8 @@ if(RATSN_FILE_INDEX_DEFAULT)
 else()
     target_compile_definitions(ratsn_core PUBLIC RATSN_FILE_INDEX_DEFAULT=0)
 endif()
+# Advertised to peers in the client_info handshake (see main.cpp kClientVersion).
+target_compile_definitions(ratsn_core PUBLIC RATSN_VERSION="${PROJECT_VERSION}")
 
 if(RATSN_WITH_TUI)
     # System-installed FTXUI only (no vendored submodule): find_package()
@@ -125,3 +134,8 @@ endif()
 
 add_executable(ratsn main.cpp)
 target_link_libraries(ratsn PRIVATE ratsn_core)
+
+if(RATSN_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

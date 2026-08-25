@@ -12,17 +12,21 @@ Indexer::Indexer(index::SearchIndex& index, domain::FilterSettings filterSetting
 {
 }
 
-void Indexer::handleDiscovered(domain::Torrent torrent)
+bool Indexer::handleDiscovered(domain::Torrent torrent)
 {
     domain::ContentClassifier::classify(torrent);
 
     if (const std::string reason = filter_.rejectionReason(torrent); !reason.empty()) {
         std::cout << "Indexer: rejected " << torrent.hash << " \"" << torrent.name << "\": " << reason << "\n";
-        return;
+        return false;
     }
 
-    if (!index_.upsert(torrent))
+    const bool existedBefore = isKnownHash(torrent.hash);
+    if (!index_.upsert(torrent)) {
         std::cerr << "Indexer: failed to index " << torrent.hash << "\n";
+        return false;
+    }
+    return !existedBefore;
 }
 
 bool Indexer::isKnownHash(const std::string& hashHex)

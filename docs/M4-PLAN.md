@@ -2,6 +2,19 @@
 
 Written 2026-08-24 for the session implementing M4. Read alongside
 docs/DESIGN-native.md (§10 milestone row, §12 acceptance + spec-source table).
+
+**Status (2026-08-25): implementation complete, unbuilt/unverified.** Every
+module below is written (peer_api, peer_registry, replication, NodeHost mesh
+wiring, TUI remote-search merge, Config keys, golden-file test scaffold) and
+committed. The §12 acceptance check itself -- running against a live Qt
+rats-search instance -- has NOT happened yet: no build was done on the
+implementing side (session policy), so this has not compiled. Remaining
+before M5 can start:
+1. Build both `ratsn` and a Qt `rats-search` instance; run the §12 localhost
+   check (see this file's "Localhost acceptance setup").
+2. Fix whatever the build/check surfaces.
+3. Capture and curate golden fixtures (`native/tests/fixtures/README.md`)
+   from the live Qt instance; commit them.
 The governing rule is unchanged: **the existing Qt code is the behavioral
 spec — port it, don't improve it.** Wire message-type names and JSON field
 names are copied verbatim (deployed peers must keep interoperating).
