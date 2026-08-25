@@ -227,7 +227,20 @@ Component SearchTab::component()
             topRowView->Render(),
             separator(),
             hbox({
-                resultsMenu->Render() | frame | size(WIDTH, LESS_THAN, 62),
+                // yframe, not frame: frame scrolls BOTH axes to center the
+                // selected entry's full (untruncated) box in the viewport,
+                // and every result line here is one Menu entry whose own
+                // rendered width is wider than this pane -- so the shared
+                // x-scroll it applies shifts the WHOLE list's visible
+                // window right by however much the selection overflows,
+                // clipping every row's start instead of its end (FTXUI
+                // src/ftxui/dom/frame.cpp's Frame::SetBox). We already
+                // truncate each line ourselves (formatResultLine) and only
+                // need the list to scroll vertically to keep the selection
+                // in view, so drop the x-axis: a plain size() box left-
+                // anchors and clips overflow on the right instead, which is
+                // what a truncated-title list is supposed to look like.
+                resultsMenu->Render() | yframe | size(WIDTH, LESS_THAN, 62),
                 separator(),
                 renderDetails() | flex,
             }) | flex,
