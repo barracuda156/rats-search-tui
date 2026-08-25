@@ -10,7 +10,9 @@ Scope was set by the project owner in the planning session:
   to loosen back to fuzzy behavior.
 - **In scope:** strict matching, TUI filter panel (+ `seedersMin`), tracker
   allow/deny filters (search-side and index-side), `ratsn export`/`import`,
-  query-syntax hardening, a Top tab, and a `t`-to-save-.torrent key.
+  query-syntax hardening, a Top tab, a `t`-to-save-.torrent key, and index
+  size control (`ratsn cleanup` + `indexMaxTorrents`, added 2026-08-25 by
+  owner decision — item 8).
 - **Out of scope, renumbered:** downloads + session resume is now **M6**;
   votes/feed/StorageManager is **M7**; the tracker *scrapers* (SwarmScraper
   seeders refresh + TrackerSiteScraper site metadata) are **M8**. The parked
@@ -213,7 +215,46 @@ Format: JSON Lines — one torrent per line, the exact wire-codec schema
 
 New keys, all native-only, all through the existing clamp/repair path:
 `strictSearch` (true), `trackerAllow` ([]), `trackerDeny` ([]),
-`trackerRequireKnown` (false).
+`trackerRequireKnown` (false), `indexMaxTorrents` (0 = unlimited).
+
+### 8. Index size control — `ratsn cleanup` + `indexMaxTorrents`
+
+Background fact that shapes both halves: Groonga's mmap'd segment files
+**grow but never shrink** — deleting records frees segments for reuse (growth
+stops, inserts recycle the space) but the on-disk files keep their
+high-water-mark size. So pruning means "stops growing", and actual disk
+reclamation is export → import into a fresh datadir (item 4's tooling —
+document this in both subcommands' usage text). This is also why the cap is
+count-based, not byte-based: a byte threshold would never visibly go down
+after pruning.
+
+**`ratsn cleanup [--dry-run]`** — CLI port of the Qt `torrent.cleanup` REST
+endpoint's semantics (`src/rest/api_router.cpp` ~466, read it first): sweep
+the whole index with the same `_id`-keyset pagination export uses (never
+OFFSET — removing rows mid-sweep shifts offsets already passed, the Qt code
+comments exactly this), apply the CURRENT filter policy (including item 3's
+tracker allow/deny — this is how "nyaa-only" gets enforced retroactively on
+an existing index), delete rejects via `GroongaIndex::remove` (which already
+cascades to the Files rows), print scanned/matched/removed. `--dry-run`
+counts only. Offline subcommand like export/import (same
+run-while-engine-stopped note); Qt's regex-validity pre-check (an invalid
+`namingRegExp` must error out, not silently accept everything) ports too.
+
+**`indexMaxTorrents` cap** (native extension, no Qt equivalent — mark it):
+enforced by the Indexer on the engine thread so spider + replication can run
+indefinitely at a bounded size. Mechanics:
+- Indexer seeds a record counter from `counts()` at pipeline start and
+  increments it on each genuinely-new insert (`handleDiscovered`'s existing
+  bool return).
+- When the counter exceeds `cap + slack` (slack = max(cap/50, 100), so
+  pruning runs in occasional batches, not per-insert), post a prune task:
+  new `GroongaIndex::lowestValueHashes(int limit)` — `select` sorted
+  `seeders,added` ascending (zero-seeder oldest first), `output_columns
+  _key` — then `remove()` each, batch-capped (~500 per task, re-post if
+  still over) so a big overshoot never stalls search. Log one line per
+  batch: `Indexer: pruned N (cap M)`.
+- Records the mesh replicates back later simply get re-pruned next cycle —
+  accepted churn, not a bug; note it in a comment.
 
 ## Acceptance (extends DESIGN-native.md §12)
 
@@ -228,6 +269,12 @@ New keys, all native-only, all through the existing clamp/repair path:
   imports everything.
 - **Top tab:** seeders-sorted list; type/time toggles change it.
 - **`t`:** the written .torrent opens in a real client (owner's end).
+- **Cleanup:** tighten a filter (e.g. enable adult filter or a tracker allow
+  list), `ratsn cleanup --dry-run` reports matches, the real run removes them
+  and search no longer returns them.
+- **Cap:** set `indexMaxTorrents` below the current count, run live: the
+  count converges to the cap and stays there under inflow; index file sizes
+  stop growing (`du` stabilizes — they will NOT shrink; that's expected).
 - TUI still usable over 80×24 ssh with the filter row open.
 
 ## Session workflow constraints (unchanged from M4)

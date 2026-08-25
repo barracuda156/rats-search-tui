@@ -303,7 +303,7 @@ keeps a future "import settings from rats-search" trivial.
 | M2 | crawler + indexer live: spider → classify → filter → searchable; stats line | the pipeline | 1.2k |
 | M3 | TUI: search/status tabs on the live index | usability | 1.5k |
 | M4 | wire compat: peer_api handlers + remote search merge; golden-file tests against the Qt app | network membership | 1.0k |
-| M5 | search quality + data management: strict match (default on), filter panel, tracker filters, export/import, Top tab, .torrent save | daily usability | 1.5k |
+| M5 | search quality + data management: strict match (default on), filter panel, tracker filters, export/import, index size cap + cleanup, Top tab, .torrent save | daily usability | 1.7k |
 | M6 | downloads tab + session resume | BT client integration | 0.8k |
 | M7 | votes/feed via StorageManager; feed tab | full parity target | 1.2k |
 | M8 | tracker scrapers: swarm stats (seeders/leechers) + site metadata (poster/description, tracker identity) | stats quality | 1.0k |
@@ -386,8 +386,10 @@ thread only. `grn_fin()` on shutdown.
   round-trip through the new codec.
 - M5: strict search returns only full-word matches (locally and for remote
   hits); filter panel narrows results live; export → import into a fresh
-  datadir round-trips; Top tab lists by seeders; `t` writes a .torrent a real
-  client opens. Details: docs/M5-PLAN.md.
+  datadir round-trips; `ratsn cleanup` retro-applies tightened filters;
+  `indexMaxTorrents` holds the index at the cap under live inflow; Top tab
+  lists by seeders; `t` writes a .torrent a real client opens. Details:
+  docs/M5-PLAN.md.
 - M6: magnet added in TUI downloads to completion; restart resumes an
   unfinished download.
 - M7: vote cast on node A visible on node B; feed shows B's newly indexed
