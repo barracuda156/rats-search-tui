@@ -1,12 +1,12 @@
 #include "engine/replication.h"
 
 #include "platform/engine_loop.h"
+#include "platform/log.h"
 
 #include "librats/subsystems/message_json.h"
 #include "librats/util/json.h"
 
 #include <algorithm>
-#include <iostream>
 
 namespace ratsn::engine {
 
@@ -32,7 +32,7 @@ void Replication::start()
     interval_ = kInitialIntervalMs;
     receivedThisCycle_ = 0;
     running_ = true;
-    std::cout << "Replication: started, interval " << interval_ << "ms\n";
+    platform::log() << "Replication: started, interval " << interval_ << "ms\n";
     engineLoop_.postDelayed([this] { performCycle(); }, interval_);
 }
 
@@ -41,7 +41,7 @@ void Replication::stop()
     if (!running_)
         return;
     running_ = false;
-    std::cout << "Replication: stopped, total replicated: " << totalReplicated_ << "\n";
+    platform::log() << "Replication: stopped, total replicated: " << totalReplicated_ << "\n";
 }
 
 void Replication::performCycle()
@@ -76,7 +76,7 @@ void Replication::settle()
     interval_ = received > kBusyThreshold ? std::min(kMaxIntervalMs, received * kBackoffPerTorrentMs) : kIdleIntervalMs;
     if (received > 0) {
         totalReplicated_ += received;
-        std::cout << "Replication: +" << received << " torrents, total " << totalReplicated_ << ", next " << interval_
+        platform::log() << "Replication: +" << received << " torrents, total " << totalReplicated_ << ", next " << interval_
                    << "ms\n";
     }
 

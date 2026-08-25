@@ -198,6 +198,22 @@ Component SearchTab::component()
     Component sortToggle = Menu(sortOption);
 
     Component topRow = Container::Horizontal({ inputComponent_, filesCheckbox, sortToggle });
+    // Container::Horizontal's default render butts its children's renders
+    // together with no gap -- the checkbox's "files" label runs straight
+    // into the toggle's current entry ("relevance"/"seeders"/...) with
+    // nothing between them. Wraps (doesn't replace) topRow purely for
+    // drawing, via the same Renderer(child, fn)-forwards-events idiom root_
+    // itself uses below, so Tab-focus cycling between the three controls is
+    // unaffected.
+    Component topRowView = Renderer(topRow, [this, filesCheckbox, sortToggle] {
+        return hbox({
+            inputComponent_->Render(),
+            text(" "),
+            filesCheckbox->Render(),
+            text("  "),
+            sortToggle->Render(),
+        });
+    });
 
     MenuOption resultsOption;
     resultsOption.entries = &resultLines_;
@@ -206,9 +222,9 @@ Component SearchTab::component()
 
     Component layout = Container::Vertical({ topRow, resultsMenu });
 
-    root_ = Renderer(layout, [this, topRow, resultsMenu] {
+    root_ = Renderer(layout, [this, topRowView, resultsMenu] {
         return vbox({
-            topRow->Render(),
+            topRowView->Render(),
             separator(),
             hbox({
                 resultsMenu->Render() | frame | size(WIDTH, LESS_THAN, 62),

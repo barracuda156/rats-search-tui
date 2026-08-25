@@ -1,12 +1,12 @@
 #include "engine/crawler.h"
 
 #include "platform/engine_loop.h"
+#include "platform/log.h"
 
 #include "librats/bittorrent/torrent_info.h"
 #include "librats/subsystems/bittorrent.h"
 
 #include <chrono>
-#include <iostream>
 
 namespace ratsn::engine {
 
@@ -71,11 +71,11 @@ bool Crawler::start()
         return true;
 
     if (!bittorrent_) {
-        std::cerr << "Crawler: BitTorrent subsystem not available\n";
+        platform::log() << "Crawler: BitTorrent subsystem not available\n";
         return false;
     }
 
-    std::cout << "Starting DHT crawler...\n";
+    platform::log() << "Starting DHT crawler...\n";
 
     // Enable spider mode with an announce callback. The core delivers the
     // info-hash already decoded and the peer as a structured Address, so no
@@ -95,7 +95,7 @@ bool Crawler::start()
     engineLoop_.postDelayed([this] { onIgnoreToggle(); }, DEFAULT_IGNORE_INTERVAL_MS);
     engineLoop_.postDelayed([this] { processMetadataQueue(); }, METADATA_QUEUE_INTERVAL_MS);
 
-    std::cout << "DHT crawler started successfully\n";
+    platform::log() << "DHT crawler started successfully\n";
     return true;
 }
 
@@ -104,7 +104,7 @@ void Crawler::stop()
     if (!running_)
         return;
 
-    std::cout << "Stopping DHT crawler...\n";
+    platform::log() << "Stopping DHT crawler...\n";
 
     if (bittorrent_)
         bittorrent_->set_spider_mode(false);
@@ -114,7 +114,7 @@ void Crawler::stop()
 
     running_ = false;
 
-    std::cout << "DHT crawler stopped. Total discovered: " << discoveredCount_.load() << "\n";
+    platform::log() << "DHT crawler stopped. Total discovered: " << discoveredCount_.load() << "\n";
 }
 
 void Crawler::onSpiderWalk()
@@ -184,11 +184,11 @@ void Crawler::onAnnounce(const std::array<uint8_t, 20>& infoHash, const std::str
     // result as a duplicate. The caller injects the "already indexed?"
     // lookup, which keeps the crawler index-free.
     if (knownHashFilter_ && knownHashFilter_(hashHex)) {
-        std::cout << "Crawler: already indexed " << hashHex.substr(0, 8) << ", skipping\n";
+        platform::log() << "Crawler: already indexed " << hashHex.substr(0, 8) << ", skipping\n";
         return;
     }
 
-    std::cout << "Crawler: announce " << hashHex.substr(0, 8) << " from " << ip << ":" << port << "\n";
+    platform::log() << "Crawler: announce " << hashHex.substr(0, 8) << " from " << ip << ":" << port << "\n";
 
     MetadataRequest request;
     request.infoHash = hashHex;
@@ -214,7 +214,10 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
 
     // librats manages the temporary torrent, the BEP 9 fetch and the
     // timeout; it invokes this callback exactly once (success or timeout) on
-    // a worker thread -- std::cout here is diagnostic only, not marshalled.
+    // a worker thread -- the platform::log() calls here run directly on it,
+    // not marshalled onto the EngineLoop thread first (platform::log() is
+    // its own thread-safe sink, unlike the state this callback otherwise
+    // touches only via engineLoop_.post below).
     auto onResult = [this, infoHash, fastPath](const librats::bittorrent::TorrentInfo& torrentInfo, bool success, const std::string& error) {
         activeFetches_--;
 
@@ -228,14 +231,14 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
             // failure arrives here with fastPath false and falls through, so
             // each announce is retried at most once by construction.
             if (fastPath && running_) {
-                std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << " (" << error
+                platform::log() << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << " (" << error
                           << "), retrying via DHT search\n";
                 MetadataRequest retry;
                 retry.infoHash = infoHash;
                 std::lock_guard<std::mutex> lock(queueMutex_);
                 metadataQueue_.push(std::move(retry));
             } else {
-                std::cout << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << ": " << error << "\n";
+                platform::log() << "Crawler: metadata fetch failed for " << infoHash.substr(0, 8) << ": " << error << "\n";
             }
             return;
         }
@@ -244,7 +247,7 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
         engineLoop_.post([this, torrent] { onMetadataReceived(torrent); });
     };
 
-    std::cout << "Crawler: fetching metadata for " << infoHash.substr(0, 8) << (fastPath ? " (fast path)\n" : " (DHT search)\n");
+    platform::log() << "Crawler: fetching metadata for " << infoHash.substr(0, 8) << (fastPath ? " (fast path)\n" : " (DHT search)\n");
     if (fastPath) {
         // Fast path: fetch directly from the announcing peer (no DHT search).
         bittorrent_->get_torrent_metadata_from_peer(infoHash, peerIp, peerPort, onResult);
@@ -256,7 +259,7 @@ void Crawler::fetchMetadata(const MetadataRequest& request)
 
 void Crawler::onMetadataReceived(const domain::Torrent& torrent)
 {
-    std::cout << "Crawler: discovered " << torrent.hash.substr(0, 8) << " \"" << torrent.name << "\"\n";
+    platform::log() << "Crawler: discovered " << torrent.hash.substr(0, 8) << " \"" << torrent.name << "\"\n";
     discoveredCount_++;
     if (discovered_)
         discovered_(torrent);

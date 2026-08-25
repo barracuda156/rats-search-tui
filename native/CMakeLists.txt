@@ -89,6 +89,7 @@ add_library(ratsn_core STATIC
     platform/paths.cpp
     platform/config.cpp
     platform/engine_loop.cpp
+    platform/log.cpp
     domain/content.cpp
     domain/torrent.cpp
     domain/torrent_codec.cpp

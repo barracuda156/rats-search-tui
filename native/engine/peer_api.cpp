@@ -4,13 +4,13 @@
 #include "engine/indexer.h"
 #include "engine/replication.h"
 #include "platform/engine_loop.h"
+#include "platform/log.h"
 
 #include "librats/peer/peer_id.h"
 #include "librats/subsystems/message_json.h"
 
 #include <algorithm>
 #include <fstream>
-#include <iostream>
 
 namespace ratsn::engine {
 
@@ -77,7 +77,7 @@ PeerApi::PeerApi(librats::MessageJson& messages, index::SearchIndex& index, Inde
     on("randomTorrents_response", &PeerApi::handleRandomTorrentsResponse);
     on("torrentAnnounce", &PeerApi::handleTorrentAnnounce);
 
-    std::cout << "PeerApi: handlers installed\n";
+    platform::log() << "PeerApi: handlers installed\n";
 }
 
 void PeerApi::on(const std::string& type, void (PeerApi::*handler)(const std::string&, const librats::Json&))
@@ -97,7 +97,7 @@ void PeerApi::enableWireDump(std::filesystem::path dataDir)
 
     std::lock_guard<std::mutex> lock(wireDumpMutex_);
     wireDumpDir_ = dir;
-    std::cout << "PeerApi: wire dump enabled -> " << dir.string() << "\n";
+    platform::log() << "PeerApi: wire dump enabled -> " << dir.string() << "\n";
 }
 
 void PeerApi::dumpWire(const std::string& type, const librats::Json& data)
@@ -117,7 +117,7 @@ void PeerApi::sendToPeer(const std::string& peerIdHex, const std::string& type, 
 {
     const auto id = librats::PeerId::from_hex(peerIdHex);
     if (!id) {
-        std::cerr << "PeerApi: invalid peer id " << shortId(peerIdHex) << "\n";
+        platform::log() << "PeerApi: invalid peer id " << shortId(peerIdHex) << "\n";
         return;
     }
     messages_.send(*id, type, data);
@@ -131,12 +131,12 @@ void PeerApi::handleSearchRequest(const std::string& peerIdHex, const librats::J
 {
     index::SearchQuery q = parseSearchRequest(data);
     if (q.text.length() <= 2) {
-        std::cout << "PeerApi: search query too short from " << shortId(peerIdHex) << " - ignoring\n";
+        platform::log() << "PeerApi: search query too short from " << shortId(peerIdHex) << " - ignoring\n";
         return;
     }
 
     const std::vector<domain::SearchHit> hits = index_.searchNames(q);
-    std::cout << "PeerApi: search \"" << q.text << "\" -> " << hits.size() << " results for " << shortId(peerIdHex)
+    platform::log() << "PeerApi: search \"" << q.text << "\" -> " << hits.size() << " results for " << shortId(peerIdHex)
                << "\n";
 
     for (const domain::SearchHit& hit : hits)
@@ -150,7 +150,7 @@ void PeerApi::handleSearchFilesRequest(const std::string& peerIdHex, const libra
         return;
 
     const std::vector<domain::SearchHit> hits = index_.searchFiles(q);
-    std::cout << "PeerApi: searchFiles \"" << q.text << "\" -> " << hits.size() << " results for "
+    platform::log() << "PeerApi: searchFiles \"" << q.text << "\" -> " << hits.size() << " results for "
                << shortId(peerIdHex) << "\n";
 
     for (const domain::SearchHit& hit : hits) {
@@ -190,7 +190,7 @@ void PeerApi::handleTopTorrentsRequest(const std::string& peerIdHex, const libra
     q.limit = limit;
 
     const std::vector<domain::Torrent> results = index_.top(q);
-    std::cout << "PeerApi: topTorrents -> " << results.size() << " results for " << shortId(peerIdHex) << "\n";
+    platform::log() << "PeerApi: topTorrents -> " << results.size() << " results for " << shortId(peerIdHex) << "\n";
 
     librats::Json torrents = librats::Json::array();
     for (const domain::Torrent& t : results)
@@ -225,7 +225,7 @@ void PeerApi::handleTorrentRequest(const std::string& peerIdHex, const librats::
     if (hits.empty())
         return; // not found: the wire protocol has no "miss" reply, stay silent
 
-    std::cout << "PeerApi: torrent " << hash.substr(0, 8) << " for " << shortId(peerIdHex) << "\n";
+    platform::log() << "PeerApi: torrent " << hash.substr(0, 8) << " for " << shortId(peerIdHex) << "\n";
     domain::codec::ToJsonOptions options;
     options.includeFiles = includeFiles;
     options.includeInfo = true;
@@ -236,7 +236,7 @@ void PeerApi::handleFeedRequest(const std::string& peerIdHex, const librats::Jso
 {
     // TODO(M6): no FeedService yet -- answer with an empty feed so a peer
     // that asks doesn't wait on a reply that will never come.
-    std::cout << "PeerApi: feed request from " << shortId(peerIdHex) << " (empty, TODO(M6))\n";
+    platform::log() << "PeerApi: feed request from " << shortId(peerIdHex) << " (empty, TODO(M6))\n";
 
     librats::Json response = librats::Json::object();
     response["feed"] = librats::Json::array();
@@ -248,14 +248,14 @@ void PeerApi::handleFeedRequest(const std::string& peerIdHex, const librats::Jso
 void PeerApi::handleRandomTorrentsRequest(const std::string& peerIdHex, const librats::Json& data)
 {
     if (!replicationServerEnabled_) {
-        std::cout << "PeerApi: replication server disabled; ignoring randomTorrents from " << shortId(peerIdHex)
+        platform::log() << "PeerApi: replication server disabled; ignoring randomTorrents from " << shortId(peerIdHex)
                    << "\n";
         return;
     }
 
     const int limit = std::clamp(data.value("limit", 5), 1, 10);
     const std::vector<domain::Torrent> torrents = index_.random(limit);
-    std::cout << "PeerApi: randomTorrents -> " << torrents.size() << " for " << shortId(peerIdHex) << "\n";
+    platform::log() << "PeerApi: randomTorrents -> " << torrents.size() << " for " << shortId(peerIdHex) << "\n";
 
     librats::Json array = librats::Json::array();
     const domain::codec::ToJsonOptions options { /*includeFiles*/ true, /*includeInfo*/ true };
@@ -306,7 +306,7 @@ void PeerApi::handleSearchFilesResult(const std::string& peerIdHex, const librat
     }
 
     const std::string query = data.value("text", "");
-    std::cout << "PeerApi: file search result from " << shortId(peerIdHex) << " for " << query << "\n";
+    platform::log() << "PeerApi: file search result from " << shortId(peerIdHex) << " for " << query << "\n";
     if (onFileSearchResult_)
         onFileSearchResult_(hit);
 }
@@ -317,7 +317,7 @@ void PeerApi::handleTorrentResponse(const std::string& peerIdHex, const librats:
     if (hash.empty())
         hash = data.value("info_hash", "");
     if (hash.length() != 40) {
-        std::cerr << "PeerApi: invalid torrent_response from " << shortId(peerIdHex) << "\n";
+        platform::log() << "PeerApi: invalid torrent_response from " << shortId(peerIdHex) << "\n";
         return;
     }
 
@@ -343,7 +343,7 @@ void PeerApi::handleRandomTorrentsResponse(const std::string& peerIdHex, const l
             ++inserted;
     }
     if (inserted > 0)
-        std::cout << "PeerApi: replicated " << inserted << " torrents from " << shortId(peerIdHex) << "\n";
+        platform::log() << "PeerApi: replicated " << inserted << " torrents from " << shortId(peerIdHex) << "\n";
 }
 
 void PeerApi::handleTorrentAnnounce(const std::string& peerIdHex, const librats::Json& data)
@@ -353,7 +353,7 @@ void PeerApi::handleTorrentAnnounce(const std::string& peerIdHex, const librats:
     if (hash.empty() || name.empty())
         return;
 
-    std::cout << "PeerApi: torrent announce from " << shortId(peerIdHex) << ": " << name << "\n";
+    platform::log() << "PeerApi: torrent announce from " << shortId(peerIdHex) << ": " << name << "\n";
     insertFromPeer(data, /*trackReplication*/ false);
 }
 

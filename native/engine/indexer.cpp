@@ -1,8 +1,7 @@
 #include "engine/indexer.h"
 
 #include "domain/content_classifier.h"
-
-#include <iostream>
+#include "platform/log.h"
 
 namespace ratsn::engine {
 
@@ -17,13 +16,13 @@ bool Indexer::handleDiscovered(domain::Torrent torrent)
     domain::ContentClassifier::classify(torrent);
 
     if (const std::string reason = filter_.rejectionReason(torrent); !reason.empty()) {
-        std::cout << "Indexer: rejected " << torrent.hash << " \"" << torrent.name << "\": " << reason << "\n";
+        platform::log() << "Indexer: rejected " << torrent.hash << " \"" << torrent.name << "\": " << reason << "\n";
         return false;
     }
 
     const bool existedBefore = isKnownHash(torrent.hash);
     if (!index_.upsert(torrent)) {
-        std::cerr << "Indexer: failed to index " << torrent.hash << "\n";
+        platform::log() << "Indexer: failed to index " << torrent.hash << "\n";
         return false;
     }
     return !existedBefore;

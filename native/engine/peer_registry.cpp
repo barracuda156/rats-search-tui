@@ -1,6 +1,7 @@
 #include "engine/peer_registry.h"
 
 #include "platform/engine_loop.h"
+#include "platform/log.h"
 
 #include "librats/node/node.h"
 #include "librats/peer/peer.h"
@@ -8,7 +9,6 @@
 #include "librats/subsystems/message_json.h"
 
 #include <chrono>
-#include <iostream>
 
 namespace ratsn::engine {
 
@@ -80,7 +80,7 @@ void PeerRegistry::onClientInfo(const std::string& peerIdHex, domain::PeerStats 
     stats.connectedAt = nowMs();
     peers_[peerIdHex] = stats;
 
-    std::cout << "PeerRegistry: peer " << peerIdHex.substr(0, 8) << " v" << stats.clientVersion
+    platform::log() << "PeerRegistry: peer " << peerIdHex.substr(0, 8) << " v" << stats.clientVersion
                << " torrents:" << stats.torrents << " files:" << stats.files << "\n";
 }
 

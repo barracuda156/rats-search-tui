@@ -2,6 +2,8 @@
 
 #include "tui/search_tab.h"
 
+#include "platform/log.h"
+
 #include "librats/util/logger.h"
 
 #include <ftxui/component/component.hpp>
@@ -64,15 +66,19 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     logger.set_file_logging_enabled(true);
     logger.set_console_logging_enabled(false);
 
-    // native/engine/crawler.cpp's and indexer.cpp's own diagnostic prints
-    // (kept deliberately for --console, see the M2 notes) are plain
-    // std::cout/std::cerr too and carry the same theoretical flash risk --
-    // left alone here since, unlike librats' Logger, they aren't routed
-    // through anything redirectable without either touching validated
-    // --console behavior or inventing a new sink. They're event-driven
-    // (discover/reject), not per-DHT-operation, so far less frequent than
-    // what was actually observed leaking; revisit if that turns out to
-    // matter in practice.
+    // Same problem, second source: native/engine/{crawler,indexer,peer_api,
+    // peer_registry,replication}.cpp's own diagnostic prints (kept
+    // deliberately for --console) go through platform::log() rather than
+    // std::cout/std::cerr directly, for exactly the reason above -- and
+    // since M4 (the peer mesh) that sink fires on close to every wire
+    // message from every connected peer, which is what actually flashes the
+    // screen badly enough to be worth fixing (event-driven crawl/index
+    // diagnostics alone were rare enough to leave alone through M3).
+    // Redirected to its own file here, same idea as the Logger above: a
+    // separate handle, not a shared stream, so it can't ever swallow
+    // FTXUI's own std::cout writes.
+    platform::enableFileLogging((std::filesystem::path(info.dataDir) / "ratsn-engine.log").string());
+
     ScreenInteractive screen = ScreenInteractive::Fullscreen();
 
     StatusModel statusModel;
@@ -161,10 +167,14 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     // Restored last, after the engine thread is fully joined -- a task that
     // fired right at shutdown may still have logged something, and that
     // should land in the file too, not the terminal mid-teardown of the
-    // alternate screen.
+    // alternate screen. Same reasoning covers platform::log(): every engine
+    // component above writes through it, so it must stay file-redirected
+    // until nothing that could call it (the just-joined engine thread) is
+    // still running.
     logger.set_console_logging_enabled(priorConsoleLogging);
     logger.set_file_logging_enabled(priorFileLogging);
     logger.set_log_file_path(priorLogFilePath);
+    platform::disableFileLogging();
 }
 
 } // namespace ratsn::tui
