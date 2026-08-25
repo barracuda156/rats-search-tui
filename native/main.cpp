@@ -13,6 +13,7 @@
 #include "tui/app.h"
 #endif
 
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
@@ -23,6 +24,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 using ratsn::domain::SearchHit;
@@ -132,6 +134,26 @@ std::unique_ptr<GroongaIndex> openIndex(const std::filesystem::path& dataDir, st
     return GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, error);
 }
 
+// Shared by startSpiderPipeline (live filtering), cmdImport and cmdCleanup
+// (docs/M5-PLAN.md items 3/4/8) so the same config keys drive filtering
+// everywhere, instead of three independently-maintained copies of this
+// block.
+ratsn::domain::FilterSettings filterSettingsFromConfig(const Config& cfg)
+{
+    ratsn::domain::FilterSettings fs;
+    fs.maxFiles = cfg.filters.maxFiles;
+    fs.sizeMin = cfg.filters.sizeMin;
+    fs.sizeMax = cfg.filters.sizeMax;
+    fs.adultFilter = cfg.filters.adultFilter;
+    fs.namingRegExp = cfg.filters.namingRegExp;
+    fs.namingRegExpNegative = cfg.filters.namingRegExpNegative;
+    fs.contentTypeFilter = cfg.filters.contentType;
+    fs.trackerAllow = cfg.trackerAllow;
+    fs.trackerDeny = cfg.trackerDeny;
+    fs.trackerRequireKnown = cfg.trackerRequireKnown;
+    return fs;
+}
+
 // Client version advertised to peers in the client_info handshake
 // (PeerRegistry); RATSN_VERSION is a CMake compile definition (native/CMakeLists.txt).
 constexpr const char* kClientVersion = "ratsn/" RATSN_VERSION;
@@ -158,15 +180,8 @@ SpiderPipeline startSpiderPipeline(const Config& cfg, const std::filesystem::pat
     if (!cfg.spider)
         return p;
 
-    ratsn::domain::FilterSettings filterSettings;
-    filterSettings.maxFiles = cfg.filters.maxFiles;
-    filterSettings.sizeMin = cfg.filters.sizeMin;
-    filterSettings.sizeMax = cfg.filters.sizeMax;
-    filterSettings.adultFilter = cfg.filters.adultFilter;
-    filterSettings.namingRegExp = cfg.filters.namingRegExp;
-    filterSettings.namingRegExpNegative = cfg.filters.namingRegExpNegative;
-    filterSettings.contentTypeFilter = cfg.filters.contentType;
-    p.indexer = std::make_unique<ratsn::engine::Indexer>(index, std::move(filterSettings));
+    p.indexer = std::make_unique<ratsn::engine::Indexer>(
+        index, filterSettingsFromConfig(cfg), loop, cfg.indexMaxTorrents);
 
     p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir, loop, kClientVersion);
     if (!p.nodeHost->start()) {
@@ -340,7 +355,8 @@ int cmdTui(std::vector<std::string> args)
 
     std::thread engineThread([&loop] { loop.run(); });
     // Stops and joins engineThread itself before returning -- see tui/app.cpp.
-    ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(), info);
+    ratsn::tui::run(
+        loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(), cfg, info);
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
@@ -358,7 +374,8 @@ int cmdSearch(std::vector<std::string> args)
     if (args.empty()) {
         std::cerr << "usage: ratsn search <query> [--files] [--limit N] [--offset N] [--sort KEY] [--asc]\n"
                      "                     [--content-type T] [--size-min N] [--size-max N]\n"
-                     "                     [--files-min N] [--files-max N] [--safe-search] [--json]\n";
+                     "                     [--files-min N] [--files-max N] [--seeders-min N] [--tracker NAME]\n"
+                     "                     [--safe-search] [--loose] [--json]\n";
         return 2;
     }
 
@@ -385,8 +402,14 @@ int cmdSearch(std::vector<std::string> args)
         q.filesMin = std::stoi(v);
     if (nextFlagValue(args, "--files-max", v))
         q.filesMax = std::stoi(v);
+    if (nextFlagValue(args, "--seeders-min", v))
+        q.seedersMin = std::stoi(v);
+    if (nextFlagValue(args, "--tracker", v))
+        q.tracker = v;
     if (hasFlag(args, "--safe-search"))
         q.safeSearch = true;
+    if (hasFlag(args, "--loose"))
+        q.strict = false;
     const bool searchFiles = hasFlag(args, "--files");
     const bool asJson = hasFlag(args, "--json");
 
@@ -503,6 +526,203 @@ int cmdRandom(std::vector<std::string> args)
     return 0;
 }
 
+// Groups a FilterPolicy rejection message (e.g. "Size too small: 12 < 100")
+// down to its stable prefix (up to the first ':', or the whole string for a
+// message with no dynamic suffix) so cmdImport/cmdCleanup can print
+// meaningful counts per *rule* instead of one bucket per distinct message.
+std::string reasonCategory(const std::string& reason)
+{
+    const size_t colon = reason.find(':');
+    return colon == std::string::npos ? reason : reason.substr(0, colon);
+}
+
+// `ratsn export`/`ratsn import`/`ratsn cleanup` (docs/M5-PLAN.md item 4/8)
+// run offline like `add`/`search` (open the index directly, no node) --
+// run them while --console/--tui is NOT running (Groonga multi-process
+// access is supported upstream but unexercised in this project). All three
+// stream JSON to/from stdin/stdout, so progress/diagnostics go to std::cerr
+// here -- a deliberate, documented exception to the "always platform::log()"
+// rule (that rule protects the TUI screen; these subcommands can never run
+// under the TUI).
+int cmdExport(std::vector<std::string> args)
+{
+    const std::string dataDirArg = extractDataDir(args);
+    const bool noFiles = hasFlag(args, "--no-files");
+    args.erase(std::remove(args.begin(), args.end(), "--no-files"), args.end());
+    const std::string outPath = args.empty() ? "-" : args.front();
+
+    const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
+    GroongaRuntime runtime;
+    std::string error;
+    std::unique_ptr<GroongaIndex> index = openIndex(dataDir, &error);
+    if (!index) {
+        std::cerr << "ratsn: failed to open index: " << error << "\n";
+        return 1;
+    }
+
+    std::ofstream file;
+    if (outPath != "-") {
+        file.open(outPath, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            std::cerr << "ratsn: cannot write " << outPath << "\n";
+            return 1;
+        }
+    }
+    std::ostream* out = outPath == "-" ? &std::cout : &file;
+
+    ratsn::domain::codec::ToJsonOptions options;
+    options.includeFiles = !noFiles;
+    options.includeInfo = true;
+
+    constexpr int kBatch = 1000;
+    int64_t afterId = 0;
+    int64_t total = 0;
+    for (;;) {
+        const auto batch = index->pageAfterId(afterId, kBatch);
+        if (batch.empty())
+            break;
+        afterId = batch.back().id;
+        for (const auto& item : batch) {
+            *out << ratsn::domain::codec::toJson(item.torrent, options).dump() << "\n";
+            ++total;
+        }
+        std::cerr << "ratsn export: " << total << " written\r";
+    }
+    std::cerr << "\nratsn export: done, " << total << " torrent(s)\n";
+    return 0;
+}
+
+int cmdImport(std::vector<std::string> args)
+{
+    const std::string dataDirArg = extractDataDir(args);
+    const bool noFilter = hasFlag(args, "--no-filter");
+    args.erase(std::remove(args.begin(), args.end(), "--no-filter"), args.end());
+    const std::string inPath = args.empty() ? "-" : args.front();
+
+    const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
+    const Config cfg = Config::load(ratsn::platform::configFile(dataDir));
+    GroongaRuntime runtime;
+    std::string error;
+    std::unique_ptr<GroongaIndex> index = GroongaIndex::open(ratsn::platform::indexDir(dataDir), cfg.fileIndex, &error);
+    if (!index) {
+        std::cerr << "ratsn: failed to open index: " << error << "\n";
+        return 1;
+    }
+
+    // FilterPolicy applied here includes the tracker allow/deny policy (item
+    // 3) -- torrents already classified by the exporting side (codec carries
+    // contentType/category) are not re-run through the classifier.
+    const ratsn::domain::FilterPolicy policy(filterSettingsFromConfig(cfg));
+
+    std::ifstream file;
+    if (inPath != "-") {
+        file.open(inPath, std::ios::binary);
+        if (!file) {
+            std::cerr << "ratsn: cannot read " << inPath << "\n";
+            return 1;
+        }
+    }
+    std::istream* in = inPath == "-" ? &std::cin : &file;
+
+    int imported = 0;
+    int malformed = 0;
+    std::unordered_map<std::string, int> rejectReasons;
+    std::string line;
+    int64_t lineNo = 0;
+    while (std::getline(*in, line)) {
+        ++lineNo;
+        if (line.empty())
+            continue;
+        librats::Json j = librats::Json::parse(line, nullptr, false);
+        if (j.is_discarded() || !j.is_object()) {
+            ++malformed;
+            continue;
+        }
+        Torrent t = ratsn::domain::codec::torrentFromJson(j);
+        if (t.hash.length() != 40) {
+            ++malformed;
+            continue;
+        }
+        if (!noFilter) {
+            if (const std::string reason = policy.rejectionReason(t); !reason.empty()) {
+                ++rejectReasons[reasonCategory(reason)];
+                continue;
+            }
+        }
+        if (index->upsert(t))
+            ++imported;
+        else
+            ++malformed;
+        if (lineNo % 1000 == 0)
+            std::cerr << "ratsn import: " << lineNo << " lines processed\r";
+    }
+
+    int rejected = 0;
+    for (const auto& [reason, count] : rejectReasons)
+        rejected += count;
+    std::cerr << "\nratsn import: imported=" << imported << " rejected=" << rejected << " malformed=" << malformed << "\n";
+    for (const auto& [reason, count] : rejectReasons)
+        std::cerr << "  rejected (" << count << "): " << reason << "\n";
+    return 0;
+}
+
+// CLI port of the Qt `torrent.cleanup` REST endpoint (src/rest/api_router.cpp
+// ~466): re-applies the CURRENT filter policy across the whole index and
+// removes torrents that no longer pass -- e.g. after tightening the adult/
+// size filters, or retroactively enforcing a new tracker allow list (item 3)
+// on records that were indexed before it was configured.
+int cmdCleanup(std::vector<std::string> args)
+{
+    const std::string dataDirArg = extractDataDir(args);
+    const bool dryRun = hasFlag(args, "--dry-run");
+
+    const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
+    const Config cfg = Config::load(ratsn::platform::configFile(dataDir));
+
+    const ratsn::domain::FilterSettings fs = filterSettingsFromConfig(cfg);
+    // An invalid regex must error out, not silently accept everything (the
+    // Qt handler's exact rationale -- see FilterPolicy::isValidNamingRegExp).
+    std::string regexError;
+    if (!ratsn::domain::FilterPolicy::isValidNamingRegExp(fs.namingRegExp, &regexError)) {
+        std::cerr << "ratsn: invalid namingRegExp: " << regexError << "\n";
+        return 1;
+    }
+    const ratsn::domain::FilterPolicy policy(fs);
+
+    GroongaRuntime runtime;
+    std::string error;
+    std::unique_ptr<GroongaIndex> index = openIndex(dataDir, &error);
+    if (!index) {
+        std::cerr << "ratsn: failed to open index: " << error << "\n";
+        return 1;
+    }
+
+    // Keyset pagination by `_id`, never OFFSET: removing rows mid-sweep would
+    // shift the offsets already passed (same reasoning as the Qt handler).
+    constexpr int kBatch = 500;
+    int64_t afterId = 0;
+    int64_t scanned = 0;
+    int64_t matched = 0;
+    for (;;) {
+        const auto batch = index->pageAfterId(afterId, kBatch);
+        if (batch.empty())
+            break;
+        afterId = batch.back().id;
+        for (const auto& item : batch) {
+            ++scanned;
+            if (!policy.accepts(item.torrent)) {
+                ++matched;
+                if (!dryRun)
+                    index->remove(item.torrent.hash);
+            }
+        }
+        std::cerr << "ratsn cleanup: scanned=" << scanned << " matched=" << matched << "\r";
+    }
+    std::cerr << "\nratsn cleanup: " << (dryRun ? "dry-run, " : "") << "scanned=" << scanned << " matched=" << matched
+               << " removed=" << (dryRun ? 0 : matched) << "\n";
+    return 0;
+}
+
 void printUsage()
 {
     std::cerr << "usage: ratsn <command> [--data-dir DIR] [options]\n"
@@ -514,7 +734,13 @@ void printUsage()
                  "  search <query>       query the local index\n"
                  "  add <file.json...>   hand-load one or more torrent JSON records\n"
                  "  top                  list top torrents by seeders\n"
-                 "  random               sample random torrents\n";
+                 "  random               sample random torrents\n"
+                 "  export [FILE|-] [--no-files]     dump the index as JSON Lines (default: stdout)\n"
+                 "  import [FILE|-] [--no-filter]    load JSON Lines back in (default: stdin)\n"
+                 "  cleanup [--dry-run]              re-apply the filter policy, remove what no longer passes\n"
+                 "\n"
+                 "export/import/cleanup run OFFLINE (open the index directly, no node) -- run them\n"
+                 "while --console/--tui is NOT running.\n";
 }
 
 } // namespace
@@ -545,6 +771,12 @@ int main(int argc, char** argv)
             return cmdTop(std::move(args));
         if (command == "random")
             return cmdRandom(std::move(args));
+        if (command == "export")
+            return cmdExport(std::move(args));
+        if (command == "import")
+            return cmdImport(std::move(args));
+        if (command == "cleanup")
+            return cmdCleanup(std::move(args));
         if (command == "-h" || command == "--help") {
             printUsage();
             return 0;

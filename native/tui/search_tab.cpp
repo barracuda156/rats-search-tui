@@ -5,7 +5,8 @@
 #include "tui/format.h"
 
 #include <algorithm>
-#include <cstdio>
+#include <cctype>
+#include <cstdlib>
 
 using namespace ftxui;
 
@@ -14,14 +15,51 @@ namespace ratsn::tui {
 namespace {
 const std::vector<std::string> kSortLabels = { "relevance", "seeders", "added", "size", "name" };
 constexpr const char* kSortKeys[] = { "", "seeders", "added", "size", "name" };
+
+std::string asciiLower(std::string s)
+{
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z')
+            c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+// Tokenizes on whitespace after ASCII-casefolding and stripping any trailing
+// '*' (the local prefix-match operator, docs/M5-PLAN.md item 1 -- a remote
+// peer's own index applies no such syntax, so it's stripped rather than
+// matched literally).
+std::vector<std::string> tokenizeCasefold(std::string text)
+{
+    while (!text.empty() && text.back() == '*')
+        text.pop_back();
+    text = asciiLower(text);
+
+    std::vector<std::string> tokens;
+    size_t i = 0;
+    while (i < text.size()) {
+        while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])))
+            ++i;
+        const size_t start = i;
+        while (i < text.size() && !std::isspace(static_cast<unsigned char>(text[i])))
+            ++i;
+        if (i > start)
+            tokens.push_back(text.substr(start, i - start));
+    }
+    return tokens;
+}
+
 } // namespace
 
 SearchTab::SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
-    engine::PeerApi* peerApi)
+    engine::PeerApi* peerApi, engine::NodeHost* nodeHost, const platform::Config& cfg, std::string dataDir)
     : engineLoop_(engineLoop)
     , index_(index)
     , screen_(screen)
     , peerApi_(peerApi)
+    , resultView_(engineLoop, screen, nodeHost, std::move(dataDir))
+    , strict_(cfg.strictSearch)
+    , safe_(cfg.safeSearch)
 {
     if (peerApi_) {
         peerApi_->setSearchResultCallback([this](const domain::SearchHit& hit) { onRemoteHit(hit); });
@@ -40,6 +78,12 @@ bool SearchTab::inputFocused() const
     return inputComponent_ && inputComponent_->Focused();
 }
 
+bool SearchTab::anyInputFocused() const
+{
+    return inputFocused() || (sizeMinInput_ && sizeMinInput_->Focused()) || (sizeMaxInput_ && sizeMaxInput_->Focused())
+        || (seedersMinInput_ && seedersMinInput_->Focused()) || (trackerInput_ && trackerInput_->Focused());
+}
+
 void SearchTab::triggerSearch()
 {
     const uint64_t gen = ++generation_;
@@ -53,6 +97,13 @@ void SearchTab::triggerSearch()
     q.text = queryText_;
     q.limit = 200;
     q.sort = kSortKeys[sortIndex_];
+    q.strict = strict_;
+    q.safeSearch = safe_;
+    q.contentType = kContentTypeValues[static_cast<size_t>(typeIndex_)];
+    q.sizeMin = parseSize(sizeMinText_);
+    q.sizeMax = parseSize(sizeMaxText_);
+    q.seedersMin = std::atoi(seedersMinText_.c_str());
+    q.tracker = trackerText_;
     const bool files = searchFiles_;
 
     // Debounced on the engine thread (§7: "search-as-you-type debounced
@@ -70,10 +121,82 @@ void SearchTab::triggerSearch()
 
             if (peerApi_) {
                 remoteSearchGeneration_ = gen;
+                remoteFilters_ = q;
                 peerApi_->broadcastSearch(q.text, q.limit, q.sort, q.descending, q.safeSearch, q.contentType, files);
             }
         },
         300);
+}
+
+bool SearchTab::passesStrictTokenCheck(const domain::SearchHit& hit) const
+{
+    const std::vector<std::string> tokens = tokenizeCasefold(remoteFilters_.text);
+    if (tokens.empty())
+        return true;
+
+    auto containsAll = [&tokens](const std::string& haystackLower) {
+        for (const std::string& tok : tokens) {
+            if (haystackLower.find(tok) == std::string::npos)
+                return false;
+        }
+        return true;
+    };
+
+    if (containsAll(asciiLower(hit.torrent.name)))
+        return true;
+    for (const std::string& p : hit.matchingPaths) {
+        if (containsAll(asciiLower(p)))
+            return true;
+    }
+    return false;
+}
+
+bool SearchTab::passesLocalFilters(const domain::SearchHit& hit) const
+{
+    const domain::Torrent& t = hit.torrent;
+    const index::SearchQuery& f = remoteFilters_;
+
+    if (f.safeSearch && t.contentCategory == domain::ContentCategory::XXX)
+        return false;
+
+    if (!f.contentType.empty()) {
+        if (f.contentType == "application") {
+            if (t.contentType != domain::ContentType::Software && t.contentType != domain::ContentType::Games)
+                return false;
+        } else if (domain::toString(t.contentType) != f.contentType) {
+            return false;
+        }
+    }
+
+    if (f.sizeMin > 0 && t.size < f.sizeMin)
+        return false;
+    if (f.sizeMax > 0 && t.size > f.sizeMax)
+        return false;
+    if (f.filesMin > 0 && t.files < f.filesMin)
+        return false;
+    if (f.filesMax > 0 && t.files > f.filesMax)
+        return false;
+    if (f.seedersMin > 0 && t.seeders < f.seedersMin)
+        return false;
+
+    if (!f.tracker.empty()) {
+        bool found = false;
+        if (t.info.is_object()) {
+            if (const librats::Json* trackers = t.info.as_object().find("trackers"); trackers && trackers->is_array()) {
+                const std::string wanted = asciiLower(f.tracker);
+                for (const librats::Json& v : *trackers) {
+                    if (v.is_string() && asciiLower(v.get<std::string>()) == wanted) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!found)
+            return false;
+    }
+
+    return true;
 }
 
 void SearchTab::onRemoteHit(domain::SearchHit hit)
@@ -84,15 +207,20 @@ void SearchTab::onRemoteHit(domain::SearchHit hit)
     if (generation_.load(std::memory_order_relaxed) != gen)
         return;
 
+    // Client-side filtering the wire can't carry (docs/M5-PLAN.md items 1/2):
+    // done here, on the EngineLoop thread, against remoteFilters_ (this tab's
+    // own state, never touched off this thread -- see its declaration).
+    if (remoteFilters_.strict && !passesStrictTokenCheck(hit))
+        return;
+    if (!passesLocalFilters(hit))
+        return;
+
     screen_.Post([this, gen, hit = std::move(hit)] {
         if (generation_.load(std::memory_order_relaxed) != gen)
             return;
-        for (const domain::SearchHit& existing : results_) {
-            if (existing.torrent.hash == hit.torrent.hash)
-                return; // dedup by hash against hits already shown
-        }
-        results_.push_back(hit);
-        resultLines_.push_back(formatResultLine(hit));
+        if (resultView_.hasHash(hit.torrent.hash))
+            return; // dedup by hash against hits already shown
+        resultView_.append(std::move(hit));
     });
 }
 
@@ -100,79 +228,7 @@ void SearchTab::applyResults(uint64_t generation, std::vector<domain::SearchHit>
 {
     if (generation_.load(std::memory_order_relaxed) != generation)
         return;
-
-    results_ = std::move(hits);
-    resultLines_.clear();
-    resultLines_.reserve(results_.size());
-    for (const domain::SearchHit& hit : results_)
-        resultLines_.push_back(formatResultLine(hit));
-    selected_ = results_.empty() ? 0 : std::min(selected_, static_cast<int>(results_.size()) - 1);
-    magnetMessage_.clear();
-}
-
-std::string SearchTab::formatResultLine(const domain::SearchHit& hit) const
-{
-    const domain::Torrent& t = hit.torrent;
-    char buf[192];
-    std::snprintf(buf, sizeof(buf), "%-50.50s  %6s  %5d seeds", t.name.c_str(), humanSize(t.size).c_str(), t.seeders);
-    std::string line = buf;
-    if (hit.remote)
-        line += "  [peer]";
-    return line;
-}
-
-Element SearchTab::renderDetails() const
-{
-    if (results_.empty() || selected_ < 0 || selected_ >= static_cast<int>(results_.size()))
-        return text("No results") | dim;
-
-    const domain::SearchHit& hit = results_[static_cast<size_t>(selected_)];
-    const domain::Torrent& t = hit.torrent;
-
-    Elements lines;
-    lines.push_back(text(t.name) | bold);
-    lines.push_back(text(t.hash) | dim);
-    lines.push_back(separatorEmpty());
-    lines.push_back(hbox({ text("size: " + humanSize(t.size) + "   "), text("files: " + std::to_string(t.files)) }));
-    lines.push_back(hbox({ text("seeders: " + std::to_string(t.seeders) + "   "),
-        text("leechers: " + std::to_string(t.leechers) + "   "), text("completed: " + std::to_string(t.completed)) }));
-    lines.push_back(text("added: " + humanDate(t.added)));
-
-    std::string typeCat = domain::toString(t.contentType);
-    const std::string cat = domain::toString(t.contentCategory);
-    if (!cat.empty())
-        typeCat = typeCat.empty() ? cat : typeCat + " / " + cat;
-    if (!typeCat.empty())
-        lines.push_back(text("type: " + typeCat));
-
-    lines.push_back(text("votes: +" + std::to_string(t.good) + " / -" + std::to_string(t.bad)));
-
-    if (hit.fromFileMatch && !hit.matchingPaths.empty()) {
-        lines.push_back(separatorEmpty());
-        lines.push_back(text("matching files:") | dim);
-        for (const std::string& p : hit.matchingPaths)
-            lines.push_back(text("  " + p));
-    } else if (!t.fileList.empty()) {
-        lines.push_back(separatorEmpty());
-        lines.push_back(text("files (" + std::to_string(t.fileList.size()) + "):") | dim);
-        constexpr size_t kMaxShown = 30;
-        size_t shown = 0;
-        for (const domain::File& f : t.fileList) {
-            if (shown >= kMaxShown) {
-                lines.push_back(text("  ... and " + std::to_string(t.fileList.size() - kMaxShown) + " more") | dim);
-                break;
-            }
-            lines.push_back(text("  " + f.path + "  (" + humanSize(f.size) + ")"));
-            ++shown;
-        }
-    }
-
-    if (!magnetMessage_.empty()) {
-        lines.push_back(separatorEmpty());
-        lines.push_back(text(magnetMessage_) | color(Color::Yellow));
-    }
-
-    return vbox(std::move(lines)) | frame;
+    resultView_.setResults(std::move(hits));
 }
 
 Component SearchTab::component()
@@ -215,47 +271,95 @@ Component SearchTab::component()
         });
     });
 
-    MenuOption resultsOption;
-    resultsOption.entries = &resultLines_;
-    resultsOption.selected = &selected_;
-    Component resultsMenu = Menu(resultsOption);
+    // --- Filter row (docs/M5-PLAN.md item 2), collapsed by default,
+    // toggled with 'f' ---
+    MenuOption typeOption = MenuOption::Toggle();
+    typeOption.entries = &kContentTypeLabels;
+    typeOption.selected = &typeIndex_;
+    typeOption.on_change = [this] { triggerSearch(); };
+    Component typeToggle = Menu(typeOption);
 
-    Component layout = Container::Vertical({ topRow, resultsMenu });
+    CheckboxOption safeOption;
+    safeOption.label = "safe";
+    safeOption.checked = &safe_;
+    safeOption.on_change = [this] { triggerSearch(); };
+    Component safeCheckbox = Checkbox(safeOption);
 
-    root_ = Renderer(layout, [this, topRowView, resultsMenu] {
+    CheckboxOption strictOption;
+    strictOption.label = "strict";
+    strictOption.checked = &strict_;
+    strictOption.on_change = [this] { triggerSearch(); };
+    Component strictCheckbox = Checkbox(strictOption);
+
+    InputOption sizeMinOption;
+    sizeMinOption.content = &sizeMinText_;
+    sizeMinOption.placeholder = "size>";
+    sizeMinOption.on_change = [this] { triggerSearch(); };
+    sizeMinInput_ = Input(sizeMinOption);
+
+    InputOption sizeMaxOption;
+    sizeMaxOption.content = &sizeMaxText_;
+    sizeMaxOption.placeholder = "size<";
+    sizeMaxOption.on_change = [this] { triggerSearch(); };
+    sizeMaxInput_ = Input(sizeMaxOption);
+
+    InputOption seedersOption;
+    seedersOption.content = &seedersMinText_;
+    seedersOption.placeholder = "seeders>";
+    seedersOption.on_change = [this] { triggerSearch(); };
+    seedersMinInput_ = Input(seedersOption);
+
+    InputOption trackerOption;
+    trackerOption.content = &trackerText_;
+    trackerOption.placeholder = "tracker";
+    trackerOption.on_change = [this] { triggerSearch(); };
+    trackerInput_ = Input(trackerOption);
+
+    Component filterRow = Container::Horizontal(
+        { typeToggle, safeCheckbox, strictCheckbox, sizeMinInput_, sizeMaxInput_, seedersMinInput_, trackerInput_ });
+    Component filterRowView = Renderer(filterRow, [this, typeToggle, safeCheckbox, strictCheckbox] {
+        return hbox({
+            typeToggle->Render(),
+            text("  "),
+            safeCheckbox->Render(),
+            text("  "),
+            strictCheckbox->Render(),
+            text("  size:"),
+            sizeMinInput_->Render() | size(WIDTH, EQUAL, 8),
+            text("-"),
+            sizeMaxInput_->Render() | size(WIDTH, EQUAL, 8),
+            text("  seeders>"),
+            seedersMinInput_->Render() | size(WIDTH, EQUAL, 6),
+            text("  tracker:"),
+            trackerInput_->Render() | size(WIDTH, EQUAL, 10),
+        });
+    });
+    // Maybe (not just conditional rendering) so a hidden filter row's Inputs
+    // can't take focus/keys either -- see anyInputFocused() and the 'f'
+    // guard below.
+    Component filterRowMaybe = Maybe(filterRowView, &filtersVisible_);
+
+    Component resultsMenu = resultView_.menu();
+
+    Component layout = Container::Vertical({ topRow, filterRowMaybe, resultsMenu });
+
+    root_ = Renderer(layout, [this, topRowView, filterRowMaybe, resultsMenu] {
         return vbox({
             topRowView->Render(),
+            filterRowMaybe->Render(),
             separator(),
-            hbox({
-                // yframe, not frame: frame scrolls BOTH axes to center the
-                // selected entry's full (untruncated) box in the viewport,
-                // and every result line here is one Menu entry whose own
-                // rendered width is wider than this pane -- so the shared
-                // x-scroll it applies shifts the WHOLE list's visible
-                // window right by however much the selection overflows,
-                // clipping every row's start instead of its end (FTXUI
-                // src/ftxui/dom/frame.cpp's Frame::SetBox). We already
-                // truncate each line ourselves (formatResultLine) and only
-                // need the list to scroll vertically to keep the selection
-                // in view, so drop the x-axis: a plain size() box left-
-                // anchors and clips overflow on the right instead, which is
-                // what a truncated-title list is supposed to look like.
-                resultsMenu->Render() | yframe | size(WIDTH, LESS_THAN, 62),
-                separator(),
-                renderDetails() | flex,
-            }) | flex,
+            resultView_.renderPane(resultsMenu) | flex,
         });
     });
 
     root_ = CatchEvent(root_, [this](Event event) {
-        if (inputFocused())
-            return false; // never steal keys the user is typing into the query
-        if (event == Event::Character('m') && !results_.empty() && selected_ >= 0
-            && selected_ < static_cast<int>(results_.size())) {
-            magnetMessage_ = "magnet: " + results_[static_cast<size_t>(selected_)].torrent.magnetLink();
+        if (anyInputFocused())
+            return false; // never steal keys the user is typing into a query/filter input
+        if (event == Event::Character('f')) {
+            filtersVisible_ = !filtersVisible_;
             return true;
         }
-        return false;
+        return resultView_.handleKey(event);
     });
 
     return root_;

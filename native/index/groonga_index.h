@@ -52,8 +52,21 @@ public:
 
     bool updateStats(const std::string& hash, int seeders, int leechers, int completed) override;
     IndexStats counts() override;
+    std::vector<std::string> lowestValueHashes(int limit) override;
 
     bool fileIndexEnabled() const { return fileIndex_; }
+
+    struct IdTorrent {
+        int64_t id = 0;
+        domain::Torrent torrent;
+    };
+    // Cursor-paginated full sweep by internal `_id`, ascending, `_id >
+    // afterId`, up to `limit` rows -- never OFFSET (docs/M5-PLAN.md item 8:
+    // removing rows mid-sweep would shift the offsets already passed).
+    // Shared primitive behind both `ratsn export` and `ratsn cleanup`; not
+    // part of the SearchIndex interface (an offline, Groonga-cursor-specific
+    // admin op, always called through the concrete type in main.cpp).
+    std::vector<IdTorrent> pageAfterId(int64_t afterId, int limit);
 
 private:
     GroongaIndex(_grn_ctx* ctx, _grn_obj* db, bool file_index);

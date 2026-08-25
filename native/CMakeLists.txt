@@ -102,6 +102,7 @@ add_library(ratsn_core STATIC
     engine/peer_registry.cpp
     engine/peer_api.cpp
     engine/replication.cpp
+    engine/torrent_file.cpp
 )
 target_include_directories(ratsn_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${RATSN_GENERATED_DIR})
 target_link_libraries(ratsn_core PUBLIC ${RATSN_LIBRATS_TARGET} PkgConfig::GROONGA PkgConfig::PCRE2)
@@ -127,6 +128,8 @@ if(RATSN_WITH_TUI)
     target_sources(ratsn_core PRIVATE
         tui/app.cpp
         tui/search_tab.cpp
+        tui/top_tab.cpp
+        tui/result_view.cpp
         tui/status_bar.cpp
     )
     target_link_libraries(ratsn_core PUBLIC ftxui::ftxui)

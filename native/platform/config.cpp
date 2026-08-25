@@ -68,6 +68,9 @@ Config Config::load(const std::filesystem::path& path)
     cfg.p2pReplicationServer = j.value("p2pReplicationServer", cfg.p2pReplicationServer);
     cfg.downloadPath = j.value("downloadPath", cfg.downloadPath);
     cfg.safeSearch = j.value("safeSearch", cfg.safeSearch);
+    cfg.strictSearch = j.value("strictSearch", cfg.strictSearch);
+    cfg.trackerRequireKnown = j.value("trackerRequireKnown", cfg.trackerRequireKnown);
+    cfg.indexMaxTorrents = j.value("indexMaxTorrents", cfg.indexMaxTorrents);
     cfg.fileIndex = j.value("fileIndex", cfg.fileIndex);
 
     // Same clamp/repair rules as Qt's ConfigStore::validateAndClamp: an
@@ -76,11 +79,23 @@ Config Config::load(const std::filesystem::path& path)
     cfg.maxPeers = std::clamp(cfg.maxPeers, kMinMaxPeers, kMaxMaxPeers);
     if (cfg.p2pReplication && !cfg.p2pReplicationServer)
         cfg.p2pReplicationServer = true;
+    if (cfg.indexMaxTorrents < 0)
+        cfg.indexMaxTorrents = 0;
 
     if (const librats::Json* trackers = j.as_object().find("trackers"); trackers && trackers->is_array()) {
         cfg.trackers.clear();
         for (const auto& t : *trackers)
             cfg.trackers.push_back(t.get<std::string>());
+    }
+    if (const librats::Json* allow = j.as_object().find("trackerAllow"); allow && allow->is_array()) {
+        cfg.trackerAllow.clear();
+        for (const auto& t : *allow)
+            cfg.trackerAllow.push_back(t.get<std::string>());
+    }
+    if (const librats::Json* deny = j.as_object().find("trackerDeny"); deny && deny->is_array()) {
+        cfg.trackerDeny.clear();
+        for (const auto& t : *deny)
+            cfg.trackerDeny.push_back(t.get<std::string>());
     }
 
     if (const librats::Json* filters = j.as_object().find("filters"); filters)
@@ -103,12 +118,25 @@ bool Config::save(const std::filesystem::path& path) const
     j["p2pReplicationServer"] = p2pReplicationServer;
     j["downloadPath"] = downloadPath;
     j["safeSearch"] = safeSearch;
+    j["strictSearch"] = strictSearch;
+    j["trackerRequireKnown"] = trackerRequireKnown;
+    j["indexMaxTorrents"] = indexMaxTorrents;
     j["fileIndex"] = fileIndex;
 
     librats::Json trackersJson = librats::Json::array();
     for (const auto& t : trackers)
         trackersJson.push_back(t);
     j["trackers"] = std::move(trackersJson);
+
+    librats::Json trackerAllowJson = librats::Json::array();
+    for (const auto& t : trackerAllow)
+        trackerAllowJson.push_back(t);
+    j["trackerAllow"] = std::move(trackerAllowJson);
+
+    librats::Json trackerDenyJson = librats::Json::array();
+    for (const auto& t : trackerDeny)
+        trackerDenyJson.push_back(t);
+    j["trackerDeny"] = std::move(trackerDenyJson);
 
     j["filters"] = filtersToJson(filters);
 

@@ -24,6 +24,13 @@ struct SearchQuery {
     int64_t sizeMax = 0;
     int filesMin = 0;
     int filesMax = 0;
+    int seedersMin = 0;
+    std::string tracker; // "" = any; otherwise a tracker name from info["trackers"]
+    // Disables Groonga's match_escalation (see docs/M5-PLAN.md "Why strict
+    // matching"): an unrelated result never outranks/replaces "no results".
+    // Default true -- matches the M5 project-owner decision to make strict
+    // the default, with a UI/CLI toggle back to loose.
+    bool strict = true;
 };
 
 struct TopQuery {
@@ -57,6 +64,10 @@ public:
     // Partial update of the tracker-scrape columns only.
     virtual bool updateStats(const std::string& hash, int seeders, int leechers, int completed) = 0;
     virtual IndexStats counts() = 0;
+
+    // Zero-seeder-oldest-first hashes, for Indexer's indexMaxTorrents pruning
+    // (docs/M5-PLAN.md item 8; native extension, no Qt equivalent).
+    virtual std::vector<std::string> lowestValueHashes(int limit) = 0;
 };
 
 } // namespace ratsn::index

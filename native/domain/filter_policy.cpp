@@ -87,6 +87,27 @@ FilterPolicy::~FilterPolicy() = default;
 FilterPolicy::FilterPolicy(FilterPolicy&&) noexcept = default;
 FilterPolicy& FilterPolicy::operator=(FilterPolicy&&) noexcept = default;
 
+bool FilterPolicy::isValidNamingRegExp(const std::string& pattern, std::string* error)
+{
+    if (pattern.empty())
+        return true;
+
+    int errorCode = 0;
+    PCRE2_SIZE errorOffset = 0;
+    pcre2_code* code = pcre2_compile(reinterpret_cast<PCRE2_SPTR>(pattern.c_str()), PCRE2_ZERO_TERMINATED,
+        PCRE2_CASELESS, &errorCode, &errorOffset, nullptr);
+    if (code) {
+        pcre2_code_free(code);
+        return true;
+    }
+    if (error) {
+        PCRE2_UCHAR buf[256];
+        pcre2_get_error_message(errorCode, buf, sizeof(buf) / sizeof(PCRE2_UCHAR));
+        *error = reinterpret_cast<const char*>(buf);
+    }
+    return false;
+}
+
 void FilterPolicy::setSettings(FilterSettings settings)
 {
     settings_ = std::move(settings);
@@ -118,6 +139,8 @@ std::string FilterPolicy::rejectionReason(const Torrent& t) const
     if (std::string r = checkNamingRegExp(t); !r.empty())
         return r;
     if (std::string r = checkContentType(t); !r.empty())
+        return r;
+    if (std::string r = checkTrackerPolicy(t); !r.empty())
         return r;
     return {};
 }
@@ -194,6 +217,48 @@ std::string FilterPolicy::checkContentType(const Torrent& t) const
             return {};
     }
     return "Content type not allowed: " + typeName;
+}
+
+std::string FilterPolicy::checkTrackerPolicy(const Torrent& t) const
+{
+    if (settings_.trackerAllow.empty() && settings_.trackerDeny.empty() && !settings_.trackerRequireKnown)
+        return {};
+
+    // info["trackers"] (docs/M5-PLAN.md item 3) is a JSON array of tracker
+    // names -- absent entirely on DHT-crawled records, which is exactly why
+    // trackerAllow + trackerRequireKnown is a live-mesh-only combination
+    // (see the config comment / M5-PLAN caveat).
+    std::vector<std::string> trackers;
+    if (t.info.is_object()) {
+        if (const librats::Json* arr = t.info.as_object().find("trackers"); arr && arr->is_array()) {
+            for (const librats::Json& v : *arr) {
+                if (v.is_string())
+                    trackers.push_back(toLower(v.get<std::string>()));
+            }
+        }
+    }
+
+    if (trackers.empty())
+        return settings_.trackerRequireKnown ? "No tracker identity (trackerRequireKnown)" : std::string {};
+
+    for (const std::string& tr : trackers) {
+        for (const std::string& deny : settings_.trackerDeny) {
+            if (equalsIgnoreCase(tr, deny))
+                return "Tracker denied: " + tr;
+        }
+    }
+
+    if (!settings_.trackerAllow.empty()) {
+        for (const std::string& tr : trackers) {
+            for (const std::string& allow : settings_.trackerAllow) {
+                if (equalsIgnoreCase(tr, allow))
+                    return {};
+            }
+        }
+        return "Tracker not in allow list";
+    }
+
+    return {};
 }
 
 } // namespace ratsn::domain

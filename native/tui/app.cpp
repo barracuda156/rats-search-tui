@@ -1,6 +1,7 @@
 #include "tui/app.h"
 
 #include "tui/search_tab.h"
+#include "tui/top_tab.h"
 
 #include "platform/log.h"
 
@@ -30,7 +31,8 @@ Element renderTabBar(int tabIndex)
     };
     return hbox({
         label(0, "Search"),
-        label(1, "Status"),
+        label(1, "Top"),
+        label(2, "Status"),
         filler(),
         text(" Tab: switch tab   /: search   q: quit ") | dim,
     });
@@ -39,7 +41,8 @@ Element renderTabBar(int tabIndex)
 } // namespace
 
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
-    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const StatusInfo& info)
+    engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, const platform::Config& cfg,
+    const StatusInfo& info)
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
@@ -84,14 +87,26 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     StatusModel statusModel;
     StatusUpdater statusUpdater(engineLoop, index, nodeHost, crawler, screen, statusModel);
 
-    SearchTab searchTab(engineLoop, index, screen, peerApi);
+    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, cfg, info.dataDir);
     Component searchComponent = searchTab.component();
+    TopTab topTab(engineLoop, index, screen, nodeHost, info.dataDir);
+    Component topComponent = topTab.component();
     Component statusComponent = Renderer([&statusModel, &info] { return renderStatusTab(statusModel, info); });
 
     int tabIndex = 0;
-    Component tabContent = Container::Tab({ searchComponent, statusComponent }, &tabIndex);
+    int priorTabIndex = 0;
+    Component tabContent = Container::Tab({ searchComponent, topComponent, statusComponent }, &tabIndex);
+    // Reload the Top tab's list on activation (docs/M5-PLAN.md item 5: "no
+    // polling") -- Container::Tab has no activation callback of its own, so
+    // this is checked once per frame in the top-level Renderer below instead.
 
+    constexpr int kTabCount = 3;
     Component layout = Renderer(tabContent, [&] {
+        if (tabIndex != priorTabIndex) {
+            if (tabIndex == 1)
+                topTab.onActivated();
+            priorTabIndex = tabIndex;
+        }
         return vbox({
             renderTabBar(tabIndex),
             separator(),
@@ -105,11 +120,15 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     // component (Container's own Tab-key focus-cycling, Menu's keys, ...)
     // -- CatchEvent is capture-first, not bubble-up (ftxui/src/component/
     // catch_event.cpp: on_event_ runs before delegating to the child).
-    // That's why 'q' explicitly checks inputFocused() -- otherwise it would
-    // steal a literal 'q' keystroke out of the search box.
+    // That's why 'q' explicitly checks anyInputFocused() -- otherwise it
+    // would steal a literal 'q' keystroke out of a search/filter box.
     layout = CatchEvent(layout, [&](Event event) {
-        if (event == Event::Tab || event == Event::TabReverse) {
-            tabIndex = 1 - tabIndex;
+        if (event == Event::Tab) {
+            tabIndex = (tabIndex + 1) % kTabCount;
+            return true;
+        }
+        if (event == Event::TabReverse) {
+            tabIndex = (tabIndex + kTabCount - 1) % kTabCount;
             return true;
         }
         if (event == Event::Character('/')) {
@@ -117,7 +136,7 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
             searchTab.focusInput();
             return true;
         }
-        if (event == Event::Character('q') && !searchTab.inputFocused()) {
+        if (event == Event::Character('q') && !searchTab.anyInputFocused()) {
             screen.ExitLoopClosure()();
             return true;
         }

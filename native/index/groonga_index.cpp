@@ -84,6 +84,24 @@ std::string join(const std::vector<std::string>& parts, const std::string& sep)
     return out;
 }
 
+// Search-as-you-type prefix match (docs/M5-PLAN.md item 1): a query still
+// being typed shouldn't need its last word finished to match. Appends `*`
+// (Groonga query-syntax prefix search against the Terms TABLE_PAT_KEY
+// lexicon) to the last token, unless the query already ends in whitespace
+// (the user finished the word), the last token is under 3 chars (too short
+// to prefix-match usefully), or it already ends in `*`. Only used in strict
+// mode -- loose mode's escalation already does its own substring fallback.
+std::string applyPrefixStar(const std::string& text)
+{
+    if (text.empty() || std::isspace(static_cast<unsigned char>(text.back())))
+        return text;
+    const size_t lastSpace = text.find_last_of(" \t\n\r");
+    const std::string lastToken = lastSpace == std::string::npos ? text : text.substr(lastSpace + 1);
+    if (lastToken.size() < 3 || lastToken.back() == '*')
+        return text;
+    return text + "*";
+}
+
 std::string contentTypeFilterExpr(const std::string& type)
 {
     if (type.empty())
@@ -253,6 +271,13 @@ bool GroongaIndex::ensureSchema(std::string* error)
         { "Torrents.bad", "column_create Torrents bad COLUMN_SCALAR UInt32" },
         { "Torrents.trackers_checked", "column_create Torrents trackers_checked COLUMN_SCALAR Time" },
         { "Torrents.info", "column_create Torrents info COLUMN_SCALAR Text" },
+        // Native extension (search-side tracker filter, docs/M5-PLAN.md item
+        // 2/3), no Qt equivalent. Lowercased tracker names from
+        // info["trackers"]; no search index -- a sequential `trackers @
+        // "name"` filter is fine at current scale (future optimization if
+        // it isn't). objectExists() above makes adding this column an
+        // automatic migration on next open of an existing DB.
+        { "Torrents.trackers", "column_create Torrents trackers COLUMN_VECTOR ShortText" },
         { "Terms", "table_create Terms TABLE_PAT_KEY ShortText --default_tokenizer TokenBigram "
                    "--normalizer NormalizerAuto" },
         { "Terms.idx_name", "column_create Terms idx_name COLUMN_INDEX|WITH_POSITION Torrents name" },
@@ -316,10 +341,26 @@ bool GroongaIndex::upsert(const domain::Torrent& t)
     if (t.trackersChecked > 0)
         rec["trackers_checked"] = static_cast<double>(t.trackersChecked) / 1000.0;
 
+    // Native extension (docs/M5-PLAN.md item 2): lowercased tracker names,
+    // read back for the search-side tracker filter and the index-side
+    // tracker allow/deny policy (domain::FilterPolicy). Absent on
+    // DHT-crawled records -- see the M5-PLAN item 3 caveat.
+    if (t.info.is_object()) {
+        if (const librats::Json* trackers = t.info.as_object().find("trackers"); trackers && trackers->is_array()) {
+            librats::Json trackersOut = librats::Json::array();
+            for (const librats::Json& v : *trackers) {
+                if (v.is_string())
+                    trackersOut.push_back(toLower(v.get<std::string>()));
+            }
+            rec["trackers"] = std::move(trackersOut);
+        }
+    }
+
     // `info` is a Text column: a JSON-encoded string, not a nested Groonga
-    // object (§5's schema comment). It carries the scraped extras plus, when
-    // fileIndex is off, the file list itself (still stored for display, just
-    // not FT-indexed).
+    // object (§5's schema comment). It carries the scraped extras plus the
+    // file list itself -- stored unconditionally (for display) regardless of
+    // fileIndex; fileIndex only gates whether the Files table also indexes it
+    // for full-text file-name search below.
     librats::Json infoOut = t.info.is_object() ? t.info : librats::Json::object();
     if (!t.fileList.empty())
         infoOut["filesList"] = domain::codec::filesToJson(t.fileList);
@@ -400,6 +441,10 @@ std::string GroongaIndex::buildFilterExpr(const SearchQuery& q) const
         parts.push_back("files > " + std::to_string(q.filesMin));
     if (q.filesMax > 0)
         parts.push_back("files < " + std::to_string(q.filesMax));
+    if (q.seedersMin > 0)
+        parts.push_back("seeders >= " + std::to_string(q.seedersMin));
+    if (!q.tracker.empty())
+        parts.push_back("trackers @ " + quoteToken(toLower(q.tracker)));
     return join(parts, " && ");
 }
 
@@ -533,7 +578,14 @@ std::vector<domain::SearchHit> GroongaIndex::searchNames(const SearchQuery& q)
         cmd += arg("filter", filterExpr);
     if (!isHash) {
         cmd += arg("match_columns", "name");
-        cmd += arg("query", q.text);
+        cmd += arg("query", q.strict ? applyPrefixStar(q.text) : q.text);
+        // Hardening in both modes (docs/M5-PLAN.md "Why strict matching"):
+        // replaces the default ALLOW_PRAGMA|ALLOW_COLUMN flags, so a stray
+        // ':'/'('/'-' in the query no longer probes columns or errors the
+        // whole query. Available since Groonga 8.0.1.
+        cmd += arg("query_flags", "QUERY_NO_SYNTAX_ERROR");
+        if (q.strict)
+            cmd += arg("match_escalation_threshold", "-1");
     }
 
     const std::string sortCol = resolveSortColumn(q.sort);
@@ -565,7 +617,10 @@ std::vector<domain::SearchHit> GroongaIndex::searchFiles(const SearchQuery& q)
     std::string cmd = "select --table Files";
     cmd += arg("output_columns", "torrent._key,path");
     cmd += arg("match_columns", "path");
-    cmd += arg("query", q.text);
+    cmd += arg("query", q.strict ? applyPrefixStar(q.text) : q.text);
+    cmd += arg("query_flags", "QUERY_NO_SYNTAX_ERROR");
+    if (q.strict)
+        cmd += arg("match_escalation_threshold", "-1");
     cmd += arg("offset", std::to_string(q.offset));
     cmd += arg("limit", std::to_string(q.limit));
 
@@ -594,9 +649,12 @@ std::vector<domain::SearchHit> GroongaIndex::searchFiles(const SearchQuery& q)
     std::vector<std::string> hashFilterParts;
     for (const auto& entry : orderedMatches)
         hashFilterParts.push_back(quoteToken(entry.first));
+    // buildFilterExpr also covers safeSearch/size/seeders/tracker (M5-PLAN
+    // item 2) -- the file-search filter row shares the same query, so its
+    // filters must narrow file hits exactly like name hits.
     std::string parentFilter = "in_values(_key, " + join(hashFilterParts, ", ") + ")";
-    if (const std::string ct = contentTypeFilterExpr(q.contentType); !ct.empty())
-        parentFilter += " && " + ct;
+    if (const std::string common = buildFilterExpr(q); !common.empty())
+        parentFilter += " && " + common;
 
     std::string parentCmd = "select --table Torrents";
     parentCmd += arg("output_columns", kOutputColumns);
@@ -604,8 +662,6 @@ std::vector<domain::SearchHit> GroongaIndex::searchFiles(const SearchQuery& q)
     parentCmd += arg("limit", std::to_string(orderedMatches.size()));
 
     for (domain::Torrent& t : parseSelectRows(send(parentCmd))) {
-        if (q.safeSearch && t.contentCategory == domain::ContentCategory::XXX)
-            continue;
         auto it = std::find_if(orderedMatches.begin(), orderedMatches.end(),
             [&](const auto& e) { return e.first == t.hash; });
         domain::SearchHit hit;
@@ -696,6 +752,71 @@ std::vector<domain::Torrent> GroongaIndex::random(int limit)
     cmd += arg("limit", std::to_string(limit));
 
     return parseSelectRows(send(cmd));
+}
+
+std::vector<GroongaIndex::IdTorrent> GroongaIndex::pageAfterId(int64_t afterId, int limit)
+{
+    std::vector<IdTorrent> out;
+    std::string cmd = "select --table Torrents";
+    cmd += arg("output_columns", "_id," + kOutputColumns);
+    cmd += arg("filter", "_id > " + std::to_string(afterId));
+    cmd += arg("sort_keys", "_id");
+    cmd += arg("limit", std::to_string(limit));
+
+    const librats::Json response = send(cmd);
+    const librats::Json* resultSet = firstResultSet(response);
+    if (!resultSet)
+        return out;
+
+    std::vector<std::string> columns;
+    for (const librats::Json& c : (*resultSet)[1]) {
+        if (c.is_array() && !c.empty())
+            columns.push_back(c[0].get<std::string>());
+    }
+    size_t idIdx = columns.size();
+    for (size_t i = 0; i < columns.size(); ++i) {
+        if (columns[i] == "_id") {
+            idIdx = i;
+            break;
+        }
+    }
+
+    out.reserve(resultSet->size() > 2 ? resultSet->size() - 2 : 0);
+    for (size_t i = 2; i < resultSet->size(); ++i) {
+        const librats::Json& row = (*resultSet)[i];
+        IdTorrent item;
+        if (idIdx < columns.size() && row.is_array() && idIdx < row.size())
+            item.id = row[idIdx].get<int64_t>();
+        item.torrent = rowToTorrent(columns, row);
+        out.push_back(std::move(item));
+    }
+    return out;
+}
+
+std::vector<std::string> GroongaIndex::lowestValueHashes(int limit)
+{
+    std::vector<std::string> hashes;
+    if (limit <= 0)
+        return hashes;
+
+    // Zero-seeder oldest-first: the least valuable records to keep when the
+    // index is over its indexMaxTorrents cap (docs/M5-PLAN.md item 8).
+    std::string cmd = "select --table Torrents";
+    cmd += arg("output_columns", "_key");
+    cmd += arg("sort_keys", "seeders,added");
+    cmd += arg("limit", std::to_string(limit));
+
+    const librats::Json response = send(cmd);
+    const librats::Json* resultSet = firstResultSet(response);
+    if (!resultSet)
+        return hashes;
+
+    for (size_t i = 2; i < resultSet->size(); ++i) {
+        const librats::Json& row = (*resultSet)[i];
+        if (row.is_array() && !row.empty())
+            hashes.push_back(row[0].get<std::string>());
+    }
+    return hashes;
 }
 
 IndexStats GroongaIndex::counts()

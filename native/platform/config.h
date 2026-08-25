@@ -50,6 +50,22 @@ struct Config {
     std::vector<std::string> trackers;
     FilterConfig filters;
     bool safeSearch = false;
+    // Native-only (docs/M5-PLAN.md item 1): default for SearchQuery::strict,
+    // the TUI's strict checkbox and `ratsn search`'s --loose flag.
+    bool strictSearch = true;
+    // Native-only (docs/M5-PLAN.md item 3, FilterPolicy extension): non-empty
+    // trackerAllow means only torrents carrying one of these tracker names in
+    // info["trackers"] pass; trackerDeny rejects a matching name; empty lists
+    // = today's behavior (no tracker-based filtering). trackerRequireKnown
+    // rejects torrents with no tracker identity at all (DHT-only spider
+    // discoveries never have one -- see the item 3 caveat in M5-PLAN.md).
+    std::vector<std::string> trackerAllow;
+    std::vector<std::string> trackerDeny;
+    bool trackerRequireKnown = false;
+    // Native-only (docs/M5-PLAN.md item 8): Indexer-enforced soft cap on
+    // indexed torrent count, prunes zero-seeder-oldest-first once exceeded by
+    // more than slack. 0 = unlimited (today's behavior).
+    int indexMaxTorrents = 0;
     bool fileIndex =
 #if RATSN_FILE_INDEX_DEFAULT
         true;
