@@ -303,11 +303,14 @@ keeps a future "import settings from rats-search" trivial.
 | M2 | crawler + indexer live: spider → classify → filter → searchable; stats line | the pipeline | 1.2k |
 | M3 | TUI: search/status tabs on the live index | usability | 1.5k |
 | M4 | wire compat: peer_api handlers + remote search merge; golden-file tests against the Qt app | network membership | 1.0k |
-| M5 | downloads tab + session resume | BT client integration | 0.8k |
-| M6 | votes/feed/top via StorageManager; feed tab | full parity target | 1.2k |
+| M5 | search quality + data management: strict match (default on), filter panel, tracker filters, export/import, Top tab, .torrent save | daily usability | 1.5k |
+| M6 | downloads tab + session resume | BT client integration | 0.8k |
+| M7 | votes/feed via StorageManager; feed tab | full parity target | 1.2k |
+| M8 | tracker scrapers: swarm stats (seeders/leechers) + site metadata (poster/description, tracker identity) | stats quality | 1.0k |
 
 M4's concrete implementation plan (scope decisions, module list, wire surface,
-acceptance-lab setup) is in docs/M4-PLAN.md.
+acceptance-lab setup) is in docs/M4-PLAN.md. M5's is in docs/M5-PLAN.md
+(scope set 2026-08-25; downloads and votes/feed were renumbered M6/M7 then).
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian
@@ -379,10 +382,17 @@ thread only. `grn_fin()` on shutdown.
 - M4: against a running Qt rats-search on localhost: remote search returns its
   results tagged remote; golden fixtures captured from that instance
   round-trip through the new codec.
-- M5: magnet added in TUI downloads to completion; restart resumes an
+- M5: strict search returns only full-word matches (locally and for remote
+  hits); filter panel narrows results live; export → import into a fresh
+  datadir round-trips; Top tab lists by seeders; `t` writes a .torrent a real
+  client opens. Details: docs/M5-PLAN.md.
+- M6: magnet added in TUI downloads to completion; restart resumes an
   unfinished download.
-- M6: vote cast on node A visible on node B; feed shows B's newly indexed
+- M7: vote cast on node A visible on node B; feed shows B's newly indexed
   torrents on A.
+- M8: seeders/leechers on a self-crawled torrent refresh from tracker
+  announces; a known-tracker torrent gains poster/description + tracker
+  identity.
 
 **Sequencing rule.** Milestones are strictly ordered; do not start M(n+1)
 until M(n)'s check passes. All checks run on a modern little-endian platform;
