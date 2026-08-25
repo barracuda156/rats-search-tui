@@ -309,8 +309,10 @@ keeps a future "import settings from rats-search" trivial.
 | M8 | tracker scrapers: swarm stats (seeders/leechers) + site metadata (poster/description, tracker identity) | stats quality | 1.0k |
 
 M4's concrete implementation plan (scope decisions, module list, wire surface,
-acceptance-lab setup) is in docs/M4-PLAN.md. M5's is in docs/M5-PLAN.md
-(scope set 2026-08-25; downloads and votes/feed were renumbered M6/M7 then).
+acceptance-lab setup) is in docs/M4-PLAN.md. M5's is in docs/M5-PLAN.md and
+M6's in docs/M6-PLAN.md (both scoped 2026-08-25; downloads and votes/feed
+were renumbered M6/M7 then). M5 and M6 are executed by separate sessions, in
+that order.
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian
