@@ -30,6 +30,17 @@ std::vector<uint8_t> assembleTorrentFile(const librats::bittorrent::TorrentInfo&
 // Crawler::fetchMetadata uses -- and fires `callback` on a librats worker
 // thread, per that call's documented contract; the caller must marshal
 // before touching any engine/UI state.
+//
+// Unlike Crawler's fast path, this always goes through the DHT-search-only
+// overload: domain::Torrent carries no peer IP/port (see crawler.cpp's
+// toDomainTorrent), so there is no announcing peer to connect to directly,
+// and the magnet URI librats builds internally has no trackers either (bare
+// "magnet:?xt=urn:btih:<hash>") -- peer discovery is DHT-get_peers only. A
+// cold DHT lookup + connect + ut_metadata handshake can genuinely take
+// longer than librats' 60s default, so this asks for more time than a
+// typical fast-path fetch would need.
+constexpr int kFetchTorrentFileTimeoutMs = 180000;
+
 using FetchTorrentFileCallback = std::function<void(std::vector<uint8_t> bytes, std::string error)>;
 void fetchTorrentFile(librats::Bittorrent& bittorrent, const std::string& infoHashHex, FetchTorrentFileCallback callback);
 

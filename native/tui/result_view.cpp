@@ -3,6 +3,7 @@
 #include "domain/content.h"
 #include "engine/node_host.h"
 #include "engine/torrent_file.h"
+#include "platform/log.h"
 #include "tui/format.h"
 
 #include "librats/subsystems/bittorrent.h"
@@ -187,6 +188,8 @@ void ResultView::handleSaveTorrent()
 
     inFlightSaves_.insert(hash);
     statusMessage_ = "fetching metadata for " + hash.substr(0, 8) + "...";
+    platform::log() << "ResultView: save-torrent " << hash.substr(0, 8)
+                     << ": requesting metadata (DHT search, no known peer)\n";
 
     librats::Bittorrent* bittorrent = nodeHost_->bittorrent();
     engineLoop_.post([this, bittorrent, hash, cacheFile] {
@@ -208,6 +211,12 @@ void ResultView::handleSaveTorrent()
                     else
                         result = "saved: " + cacheFile.string();
                 }
+                // Logged (not just shown in the TUI's transient status line)
+                // so the outcome is still inspectable in ratsn-engine.log
+                // after the details pane has moved on to something else --
+                // set RATSN_BT_DEBUG=1 before launching for librats' own
+                // DHT/peer-connect DEBUG lines alongside this.
+                platform::log() << "ResultView: save-torrent " << hash.substr(0, 8) << ": " << result << "\n";
                 screen_.Post([this, hash, result] {
                     inFlightSaves_.erase(hash);
                     statusMessage_ = result;

@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <thread>
@@ -65,9 +66,17 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     const bool priorConsoleLogging = logger.is_console_logging_enabled();
     const bool priorFileLogging = logger.is_file_logging_enabled();
     const std::string priorLogFilePath = logger.get_log_file_path();
+    const librats::LogLevel priorLogLevel = logger.get_log_level();
     logger.set_log_file_path((std::filesystem::path(info.dataDir) / "ratsn.log").string());
     logger.set_file_logging_enabled(true);
     logger.set_console_logging_enabled(false);
+    // Default level is INFO, which filters out librats' own DHT get_peers/
+    // announce/peer-connect lines (all LOG_DEBUG) -- exactly the lines that
+    // would show whether the 't' save-.torrent flow's DHT-only metadata
+    // search (see torrent_file.h) ever finds a peer at all. Opt-in only:
+    // DEBUG is chatty and this log already fills fast under the mesh (M4).
+    if (std::getenv("RATSN_BT_DEBUG"))
+        logger.set_log_level(librats::LogLevel::DEBUG);
 
     // Same problem, second source: native/engine/{crawler,indexer,peer_api,
     // peer_registry,replication}.cpp's own diagnostic prints (kept
@@ -193,6 +202,7 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     logger.set_console_logging_enabled(priorConsoleLogging);
     logger.set_file_logging_enabled(priorFileLogging);
     logger.set_log_file_path(priorLogFilePath);
+    logger.set_log_level(priorLogLevel);
     platform::disableFileLogging();
 }
 

@@ -48,13 +48,15 @@ std::vector<uint8_t> assembleTorrentFile(const bt::TorrentInfo& info)
 void fetchTorrentFile(librats::Bittorrent& bittorrent, const std::string& infoHashHex, FetchTorrentFileCallback callback)
 {
     bittorrent.get_torrent_metadata(
-        infoHashHex, [callback](const bt::TorrentInfo& info, bool success, const std::string& error) {
+        infoHashHex,
+        [callback](const bt::TorrentInfo& info, bool success, const std::string& error) {
             if (!success || !info.is_valid()) {
                 callback({}, error.empty() ? "metadata fetch failed" : error);
                 return;
             }
             callback(assembleTorrentFile(info), {});
-        });
+        },
+        kFetchTorrentFileTimeoutMs);
 }
 
 } // namespace ratsn::engine
