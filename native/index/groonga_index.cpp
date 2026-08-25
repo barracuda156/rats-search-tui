@@ -28,6 +28,31 @@ bool isHashLike(const std::string& s)
     return s.size() == 40 && std::all_of(s.begin(), s.end(), [](unsigned char c) { return std::isxdigit(c); });
 }
 
+// Seeded once per thread rather than reconstructed on every random() call:
+// libc++ (macOS)'s std::random_device opens /dev/urandom per instance, and
+// random() is on the hot path of the mesh's randomTorrents traffic
+// (PeerApi::handleRandomTorrentsRequest fires this for every connected
+// peer's periodic ask, docs/M4-PLAN.md) -- one fd churn per call adds up.
+// More importantly, std::random_device's constructor throws
+// std::system_error if it can't open its entropy source (observed in the
+// wild: EMFILE once a long-running node's other fds -- DHT/mesh/BitTorrent
+// peer sockets, active downloads' open piece files -- crowd out the low
+// default per-process fd limit macOS ships). Uncaught, that exception
+// propagates out through the EngineLoop and abort()s the whole process over
+// what should only ever degrade one reply's sample quality -- caught here
+// and downgraded to a clock-based seed instead.
+std::mt19937_64& randomEngine()
+{
+    static thread_local std::mt19937_64 rng { [] {
+        try {
+            return static_cast<std::mt19937_64::result_type>(std::random_device {}());
+        } catch (const std::exception&) {
+            return static_cast<std::mt19937_64::result_type>(std::chrono::steady_clock::now().time_since_epoch().count());
+        }
+    }() };
+    return rng;
+}
+
 // Escapes and double-quotes `raw` into a single token for Groonga's
 // command-line request grammar (verified against lib/str.c's
 // grn_text_unesc_tok(): '\\' and '"' need backslash-escaping inside a
@@ -734,7 +759,7 @@ std::vector<domain::Torrent> GroongaIndex::random(int limit)
     if (maxId <= 0)
         return out;
 
-    std::mt19937_64 rng(std::random_device {}());
+    std::mt19937_64& rng = randomEngine();
     std::uniform_int_distribution<int64_t> dist(1, maxId);
     const int64_t oversample = std::min<int64_t>(maxId, static_cast<int64_t>(limit) * 5 + 10);
 

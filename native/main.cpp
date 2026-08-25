@@ -28,6 +28,10 @@
 #include <unordered_map>
 #include <vector>
 
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
+
 using ratsn::domain::SearchHit;
 using ratsn::domain::Torrent;
 using ratsn::index::GroongaIndex;
@@ -98,6 +102,35 @@ void handleSigint(int)
 {
     if (EngineLoop* loop = g_engineLoop.load(std::memory_order_relaxed))
         loop->stop();
+}
+
+// Raises the process's open-file soft limit toward its hard ceiling, best
+// effort. macOS ships a stingy per-process default (commonly 256) that a
+// long-running node can exhaust in ordinary operation: DHT + mesh +
+// BitTorrent peer sockets, every active download's open piece files,
+// Groonga's own mmap'd segment files, plus ratsn's own log files all count
+// against it. Past the limit, ANY open()/socket() call anywhere in the
+// process can fail with EMFILE -- this crashed a real M6 test session via
+// std::random_device's constructor throwing uncaught out of
+// GroongaIndex::random() (that call site is separately hardened not to
+// crash on it, but the fd exhaustion itself needed fixing at the source).
+// Mirrors the pattern librats/tests/test_reactor.cpp already uses for the
+// identical reason (see its raise_fd_limit()), minus the test's specific
+// target size. Only called from --console/--tui: the one-shot CLI
+// subcommands don't hold long-lived connections and don't need it.
+void raiseFdLimit()
+{
+#ifndef _WIN32
+    rlimit rl {};
+    if (::getrlimit(RLIMIT_NOFILE, &rl) != 0)
+        return;
+    constexpr rlim_t kWanted = 8192;
+    if (rl.rlim_cur >= kWanted)
+        return;
+    rlimit want = rl;
+    want.rlim_cur = (rl.rlim_max == RLIM_INFINITY) ? kWanted : std::min(rl.rlim_max, kWanted);
+    ::setrlimit(RLIMIT_NOFILE, &want); // best-effort; failure just leaves the original limit
+#endif
 }
 
 // Pulls `--data-dir DIR` (and removes it) out of an argv-style vector so every
@@ -297,6 +330,7 @@ void printTorrentLine(const Torrent& t)
 
 int cmdConsole(std::vector<std::string> args)
 {
+    raiseFdLimit();
     const std::string dataDirArg = extractDataDir(args);
     const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
     const std::filesystem::path cfgPath = ratsn::platform::configFile(dataDir);
@@ -358,6 +392,7 @@ int cmdConsole(std::vector<std::string> args)
 #ifdef RATSN_WITH_TUI
 int cmdTui(std::vector<std::string> args)
 {
+    raiseFdLimit();
     const std::string dataDirArg = extractDataDir(args);
     const std::filesystem::path dataDir = ratsn::platform::resolveDataDir(dataDirArg);
     const std::filesystem::path cfgPath = ratsn::platform::configFile(dataDir);
