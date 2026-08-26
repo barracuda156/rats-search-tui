@@ -312,7 +312,11 @@ M4's concrete implementation plan (scope decisions, module list, wire surface,
 acceptance-lab setup) is in docs/M4-PLAN.md. M5's is in docs/M5-PLAN.md and
 M6's in docs/M6-PLAN.md (both scoped 2026-08-25; downloads and votes/feed
 were renumbered M6/M7 then). M5 and M6 are executed by separate sessions, in
-that order.
+that order. M7's plan is docs/M7-PLAN.md and M8's docs/M8-PLAN.md (both
+scoped 2026-08-26); M7 and M8 are independent of each other and can run in
+either order, each in its own session. M7 requires librats built with
+-DRATS_STORAGE=ON; M8 makes libcurl a hard dependency (see M8-PLAN's
+dependency-policy note).
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian
@@ -392,8 +396,9 @@ thread only. `grn_fin()` on shutdown.
   docs/M5-PLAN.md.
 - M6: magnet added in TUI downloads to completion; restart resumes an
   unfinished download.
-- M7: vote cast on node A visible on node B; feed shows B's newly indexed
-  torrents on A.
+- M7: vote cast on node A visible on node B; feed shows B's newly voted
+  torrents on A (the feed is the voted-torrents feed — entries enter only
+  via votes, then sync peer-to-peer; see M7-PLAN's correction note).
 - M8: seeders/leechers on a self-crawled torrent refresh from tracker
   announces; a known-tracker torrent gains poster/description + tracker
   identity.
