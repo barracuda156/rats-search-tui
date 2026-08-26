@@ -307,6 +307,7 @@ keeps a future "import settings from rats-search" trivial.
 | M6 | downloads tab + session resume | BT client integration | 0.8k |
 | M7 | votes/feed via StorageManager; feed tab | full parity target | 1.2k |
 | M8 | tracker scrapers: swarm stats (seeders/leechers) + site metadata (poster/description, tracker identity) | stats quality | 1.0k |
+| M9 | optional GUI: borealis/nanovg front-end (SDL2 or GLFW backend) over the same engine; search/top/feed/downloads views, poster browse | front-end replaceability | 2.5k |
 
 M4's concrete implementation plan (scope decisions, module list, wire surface,
 acceptance-lab setup) is in docs/M4-PLAN.md. M5's is in docs/M5-PLAN.md and
@@ -317,6 +318,25 @@ scoped 2026-08-26); M7 and M8 are independent of each other and can run in
 either order, each in its own session. M7 requires librats built with
 -DRATS_STORAGE=ON; M8 makes libcurl a hard dependency (see M8-PLAN's
 dependency-policy note).
+
+M9 (optional GUI, registered 2026-08-26) deliberately has no plan doc yet.
+Its **toolkit decision is settled and not to be relitigated**: borealis
+(xfangfang's fork) + nanovg + yoga, over SDL2 on the retro targets (the
+owner already runs this stack on PPC/BE — xfangfang/wiliwili#570, including
+the big-endian color fixes) or GLFW on newer systems (note: mainline GLFW
+has no IME support at all). Qt4 and Cocoa were considered and rejected
+(dead-toolkit weight / ObjC++); upstream Qt6 `src/ui/` is not reusable
+under any toolkit — UX blueprint only. Architecturally the GUI is a second
+shell beside the TUI: a `gui::run()` over the same EnginePipeline pointer
+surface, gated by its own build option (`RATSN_WITH_GUI`), marshalling with
+a post-to-main-thread helper exactly like the TUI's `screen_.Post` idiom;
+`native/engine|index|platform` stay front-end-free. Write docs/M9-PLAN.md
+in a dedicated session once: (a) a small SDL text-input probe has run on
+the retro target (log SDL_TEXTINPUT/SDL_TEXTEDITING under a Cyrillic
+layout, a CJK IME, and clipboard paste — paste is the accepted fallback
+for typed CJK), (b) the exact borealis fork/tag proven in the owner's
+wiliwili port is pinned, and (c) M7/M8 have landed, since the GUI renders
+their features (feed, votes, posters).
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian
@@ -402,6 +422,10 @@ thread only. `grn_fin()` on shutdown.
 - M8: seeders/leechers on a self-crawled torrent refresh from tracker
   announces; a known-tracker torrent gains poster/description + tracker
   identity.
+- M9: with RATSN_WITH_GUI on, every TUI flow works in the GUI
+  (search-as-you-type including CJK-by-paste, download to completion, feed
+  browse, vote); M8 posters render in a browse view; runs on the PPC
+  target; the TUI build is unaffected when the option is off.
 
 **Sequencing rule.** Milestones are strictly ordered; do not start M(n+1)
 until M(n)'s check passes. All checks run on a modern little-endian platform;
