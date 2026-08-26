@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/torrent.h"
+#include "librats/util/json.h"
 
 #include <cstdint>
 #include <optional>
@@ -61,8 +62,12 @@ public:
     virtual std::vector<domain::Torrent> top(const TopQuery& query) = 0;
     virtual std::vector<domain::Torrent> random(int limit) = 0;
 
-    // Partial update of the tracker-scrape columns only.
+    // Partial update of the tracker-scrape columns only; also stamps
+    // trackers_checked = now (docs/M8-PLAN.md item 4).
     virtual bool updateStats(const std::string& hash, int seeders, int leechers, int completed) = 0;
+    // Shallow-merges `info`'s keys onto the row's existing `info` object
+    // (docs/M8-PLAN.md item 4 -- port of data::TorrentRepository::mergeInfo).
+    virtual bool mergeInfo(const std::string& hash, const librats::Json& info) = 0;
     virtual IndexStats counts() = 0;
 
     // Zero-seeder-oldest-first hashes, for Indexer's indexMaxTorrents pruning

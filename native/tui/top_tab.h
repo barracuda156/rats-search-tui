@@ -17,6 +17,7 @@
 namespace ratsn::engine {
 class NodeHost;
 class DownloadManager;
+class TrackerService;
 }
 
 // The Top tab (docs/M5-PLAN.md item 5): content-type + time-window toggles
@@ -33,13 +34,25 @@ public:
     // download flow (docs/M6-PLAN.md item 5). All borrowed pointers must
     // outlive this object.
     TopTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
-        engine::NodeHost* nodeHost, engine::DownloadManager* downloads, std::string dataDir);
+        engine::NodeHost* nodeHost, engine::DownloadManager* downloads, engine::TrackerService* trackerService,
+        std::string dataDir);
 
     ftxui::Component component();
 
     // Called by app.cpp when this tab becomes active, so the list reflects
     // the index without a background poll (docs/M5-PLAN.md: "no polling").
     void onActivated();
+
+    // Forwarded to resultView_ (docs/M8-PLAN.md item 7); see ResultView's own
+    // doc comment.
+    void updateSelectedStats(const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs)
+    {
+        resultView_.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
+    }
+    void updateSelectedInfo(const std::string& hash, const librats::Json& info)
+    {
+        resultView_.updateSelectedInfo(hash, info);
+    }
 
 private:
     void reload();

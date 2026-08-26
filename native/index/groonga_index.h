@@ -51,6 +51,7 @@ public:
     std::vector<domain::Torrent> random(int limit) override;
 
     bool updateStats(const std::string& hash, int seeders, int leechers, int completed) override;
+    bool mergeInfo(const std::string& hash, const librats::Json& info) override;
     IndexStats counts() override;
     std::vector<std::string> lowestValueHashes(int limit) override;
 
@@ -83,6 +84,10 @@ private:
     // namespace; used to make schema setup idempotent across restarts.
     bool objectExists(const std::string& name);
     void removeFilesFor(const std::string& hash);
+    // Raw (still JSON-encoded-string) `info` column for one hash, or an empty
+    // string if the row doesn't exist or has none -- the read half of
+    // mergeInfo's read-merge-write.
+    std::string readInfoRaw(const std::string& hash);
 
     std::string buildFilterExpr(const SearchQuery& query) const;
     static std::string resolveSortColumn(const std::string& key);

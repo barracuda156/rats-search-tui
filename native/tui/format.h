@@ -88,4 +88,61 @@ inline std::string humanDate(int64_t epochMs)
     return buf;
 }
 
+// `epochMs` is milliseconds since the Unix epoch (domain::Torrent::
+// trackersChecked's unit). Used for the details pane's "seeders: N (checked
+// 3m ago)" display (docs/M8-PLAN.md item 7).
+inline std::string humanAge(int64_t epochMs)
+{
+    if (epochMs <= 0)
+        return "never";
+    const int64_t nowMs = static_cast<int64_t>(std::time(nullptr)) * 1000;
+    int64_t deltaSec = (nowMs - epochMs) / 1000;
+    if (deltaSec < 0)
+        deltaSec = 0;
+    if (deltaSec < 60)
+        return std::to_string(deltaSec) + "s ago";
+    if (deltaSec < 3600)
+        return std::to_string(deltaSec / 60) + "m ago";
+    if (deltaSec < 86400)
+        return std::to_string(deltaSec / 3600) + "h ago";
+    return std::to_string(deltaSec / 86400) + "d ago";
+}
+
+// Greedy word-wrap for the details pane's scraped description (docs/
+// M8-PLAN.md item 7). Not FTXUI's paragraph() -- that pulls in a layout
+// dependency this header doesn't otherwise have, for a one-off need here.
+// Preserves embedded newlines as paragraph breaks.
+inline std::vector<std::string> wrapText(const std::string& text, size_t width)
+{
+    std::vector<std::string> lines;
+    size_t paraStart = 0;
+    while (paraStart <= text.size()) {
+        const size_t nl = text.find('\n', paraStart);
+        const std::string para = text.substr(paraStart, nl == std::string::npos ? std::string::npos : nl - paraStart);
+
+        std::string current;
+        size_t pos = 0;
+        while (pos < para.size()) {
+            const size_t spaceEnd = para.find(' ', pos);
+            const std::string word = para.substr(pos, spaceEnd == std::string::npos ? std::string::npos : spaceEnd - pos);
+            if (!current.empty() && current.size() + 1 + word.size() > width) {
+                lines.push_back(current);
+                current.clear();
+            }
+            if (!current.empty())
+                current += ' ';
+            current += word;
+            if (spaceEnd == std::string::npos)
+                break;
+            pos = spaceEnd + 1;
+        }
+        lines.push_back(current);
+
+        if (nl == std::string::npos)
+            break;
+        paraStart = nl + 1;
+    }
+    return lines;
+}
+
 } // namespace ratsn::tui

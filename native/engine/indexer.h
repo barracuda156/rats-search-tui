@@ -5,6 +5,7 @@
 #include "index/search_index.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace ratsn::platform {
@@ -40,6 +41,13 @@ public:
     // Crawler::KnownHashFilter-compatible: true if `hashHex` is already indexed.
     bool isKnownHash(const std::string& hashHex);
 
+    // Fired on every successful insert in handleDiscovered (docs/M8-PLAN.md
+    // item 5) -- the single write path both the crawler and PeerApi funnel
+    // through, so this one hook matches Qt's torrentIndexed signal coverage
+    // exactly. Set before the pipeline starts producing discoveries.
+    using IndexedCallback = std::function<void(const std::string& hash, const std::string& name)>;
+    void setIndexedCallback(IndexedCallback callback) { onIndexed_ = std::move(callback); }
+
 private:
     // Checked after every genuinely-new insert; posts pruneBatch() to the
     // engine loop once recordCount_ exceeds indexMaxTorrents_ by more than
@@ -56,6 +64,7 @@ private:
     int indexMaxTorrents_;
     int64_t recordCount_;
     bool pruneInFlight_ = false;
+    IndexedCallback onIndexed_;
 };
 
 } // namespace ratsn::engine

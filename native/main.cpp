@@ -6,6 +6,9 @@
 #include "engine/peer_api.h"
 #include "engine/peer_registry.h"
 #include "engine/replication.h"
+#include "engine/site_scraper.h"
+#include "engine/swarm_scraper.h"
+#include "engine/tracker_service.h"
 #include "index/groonga_index.h"
 #include "platform/config.h"
 #include "platform/engine_loop.h"
@@ -13,6 +16,8 @@
 #ifdef RATSN_WITH_TUI
 #include "tui/app.h"
 #endif
+
+#include <curl/curl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -235,6 +240,13 @@ struct EnginePipeline {
     std::unique_ptr<ratsn::engine::Replication> replication;
     std::unique_ptr<ratsn::engine::PeerApi> peerApi;
     std::unique_ptr<ratsn::engine::DownloadManager> downloads;
+    // Tracker scrapers (M8): independent of NodeHost -- SwarmScraper talks to
+    // trackers directly (librats' free announce_to_tracker(), not our own
+    // Node) and TrackerSiteScraper is plain HTTP, so all three are
+    // constructed unconditionally, even when nodeHost->start() failed.
+    std::unique_ptr<ratsn::engine::SwarmScraper> swarmScraper;
+    std::unique_ptr<ratsn::engine::TrackerSiteScraper> siteScraper;
+    std::unique_ptr<ratsn::engine::TrackerService> trackerService;
 };
 
 EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
@@ -243,6 +255,19 @@ EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::pat
 
     p.indexer = std::make_unique<ratsn::engine::Indexer>(
         index, filterSettingsFromConfig(cfg), loop, cfg.indexMaxTorrents);
+
+    p.swarmScraper = std::make_unique<ratsn::engine::SwarmScraper>(loop);
+    p.siteScraper = std::make_unique<ratsn::engine::TrackerSiteScraper>(loop);
+    p.trackerService
+        = std::make_unique<ratsn::engine::TrackerService>(*p.swarmScraper, *p.siteScraper, index);
+    // Qt parity: "trackers" gates both halves; "siteScraper" additionally
+    // gates the heavier HTTP half at runtime (docs/M8-PLAN.md item 6).
+    p.trackerService->setCountScrapingEnabled(cfg.trackersEnabled);
+    p.trackerService->setInfoScrapingEnabled(cfg.trackersEnabled && cfg.siteScraper);
+    ratsn::engine::TrackerService* trackerServicePtr = p.trackerService.get();
+    p.indexer->setIndexedCallback([trackerServicePtr](const std::string& hash, const std::string& name) {
+        trackerServicePtr->onTorrentIndexed(hash, name);
+    });
 
     p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir, loop, kClientVersion);
     if (!p.nodeHost->start()) {
@@ -377,6 +402,12 @@ int cmdConsole(std::vector<std::string> args)
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
+    // Tracker scrapers next (mirrors application.cpp's stop(): crawler, then
+    // trackers, before downloads/node) -- no more tracker work is issued
+    // once shutdown starts, and in-flight announces/HTTP fetches drain here
+    // rather than blocking teardown later. Always present (M8: independent
+    // of NodeHost), unlike crawler/nodeHost above.
+    pipeline.trackerService->stop();
     // Downloads save before the node (its BitTorrent client) stops --
     // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
     pipeline.downloads->stop();
@@ -445,10 +476,16 @@ int cmdTui(std::vector<std::string> args)
     std::thread engineThread([&loop] { loop.run(); });
     // Stops and joins engineThread itself before returning -- see tui/app.cpp.
     ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(),
-        pipeline.downloads.get(), cfg, info);
+        pipeline.downloads.get(), pipeline.trackerService.get(), cfg, info);
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
+    // Tracker scrapers next (mirrors application.cpp's stop(): crawler, then
+    // trackers, before downloads/node) -- no more tracker work is issued
+    // once shutdown starts, and in-flight announces/HTTP fetches drain here
+    // rather than blocking teardown later. Always present (M8: independent
+    // of NodeHost), unlike crawler/nodeHost above.
+    pipeline.trackerService->stop();
     // Downloads save before the node (its BitTorrent client) stops --
     // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
     pipeline.downloads->stop();
@@ -836,10 +873,21 @@ void printUsage()
                  "while --console/--tui is NOT running.\n";
 }
 
+// engine/site_scraper.cpp's blocking HTTP fetches need curl_global_init()
+// once, before any thread touches libcurl, and curl_global_cleanup() at
+// exit (docs/M8-PLAN.md item 2) -- RAII so every return path out of main(),
+// including a thrown exception, still cleans up.
+struct CurlGlobalGuard {
+    CurlGlobalGuard() { curl_global_init(CURL_GLOBAL_DEFAULT); }
+    ~CurlGlobalGuard() { curl_global_cleanup(); }
+};
+
 } // namespace
 
 int main(int argc, char** argv)
 {
+    const CurlGlobalGuard curlGuard;
+
     std::vector<std::string> args(argv + 1, argv + argc);
     if (args.empty()) {
         printUsage();

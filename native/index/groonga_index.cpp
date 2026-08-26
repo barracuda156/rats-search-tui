@@ -434,11 +434,76 @@ bool GroongaIndex::remove(const std::string& hash)
 
 bool GroongaIndex::updateStats(const std::string& hash, int seeders, int leechers, int completed)
 {
+    const int64_t nowSecs
+        = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+
     librats::Json rec = librats::Json::object();
     rec["_key"] = toLower(hash);
     rec["seeders"] = seeders;
     rec["leechers"] = leechers;
     rec["completed"] = completed;
+    // Qt's updateTrackerCounts also stamps trackersChecked on every scrape
+    // (docs/M8-PLAN.md item 4) -- this native method predates that and never
+    // did until now.
+    rec["trackers_checked"] = static_cast<double>(nowSecs);
+    librats::Json values = librats::Json::array();
+    values.push_back(std::move(rec));
+
+    const std::string cmd = "load --table Torrents --values " + quoteToken(values.dump());
+    std::string err;
+    return !send(cmd, &err).is_null();
+}
+
+std::string GroongaIndex::readInfoRaw(const std::string& hash)
+{
+    std::string cmd = "select --table Torrents";
+    cmd += arg("output_columns", "info");
+    cmd += arg("filter", "_key == " + quoteToken(toLower(hash)));
+    cmd += arg("limit", "1");
+
+    const librats::Json* resultSet = firstResultSet(send(cmd));
+    if (!resultSet || resultSet->size() <= 2)
+        return {};
+    const librats::Json& row = (*resultSet)[2];
+    if (!row.is_array() || row.empty() || !row[0].is_string())
+        return {};
+    return row[0].get<std::string>();
+}
+
+bool GroongaIndex::mergeInfo(const std::string& hash, const librats::Json& info)
+{
+    librats::Json merged = librats::Json::object();
+    if (const std::string existingRaw = readInfoRaw(hash); !existingRaw.empty()) {
+        librats::Json existing = librats::Json::parse(existingRaw, nullptr, false);
+        if (existing.is_object())
+            merged = std::move(existing);
+    }
+
+    if (info.is_object()) {
+        for (const auto& [key, value] : info.as_object())
+            merged[key] = value;
+    }
+
+    librats::Json rec = librats::Json::object();
+    rec["_key"] = toLower(hash);
+    rec["info"] = merged.dump();
+
+    // Re-derive the denormalized `trackers` search column from the merged
+    // info too (same logic as upsert() -- docs/M5-PLAN.md item 2/3's
+    // search-side tracker filter). Without this, a torrent whose tracker
+    // identity arrives purely via mergeInfo (M8 site-scraping, never an
+    // upsert()) would carry it in `info` -- so FilterPolicy-based checks
+    // (e.g. `ratsn cleanup`) see it -- but stay invisible to `--tracker NAME`
+    // search, which queries this column, not `info`.
+    if (const librats::Json* trackers = merged.as_object().find("trackers"); trackers && trackers->is_array()) {
+        librats::Json trackersOut = librats::Json::array();
+        for (const librats::Json& v : *trackers) {
+            if (v.is_string())
+                trackersOut.push_back(toLower(v.get<std::string>()));
+        }
+        rec["trackers"] = std::move(trackersOut);
+    }
+
     librats::Json values = librats::Json::array();
     values.push_back(std::move(rec));
 

@@ -19,6 +19,7 @@ namespace ratsn::engine {
 class PeerApi;
 class NodeHost;
 class DownloadManager;
+class TrackerService;
 }
 
 // The Search tab (docs/DESIGN-native.md §7): a debounced search-as-you-type
@@ -41,7 +42,7 @@ public:
     // outlive this object.
     SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
         engine::PeerApi* peerApi, engine::NodeHost* nodeHost, engine::DownloadManager* downloads,
-        const platform::Config& cfg, std::string dataDir);
+        engine::TrackerService* trackerService, const platform::Config& cfg, std::string dataDir);
 
     // Builds (once) and returns the tab's root component.
     ftxui::Component component();
@@ -51,6 +52,17 @@ public:
     void focusInput();
     bool inputFocused() const;
     bool anyInputFocused() const;
+
+    // Forwarded to resultView_ (docs/M8-PLAN.md item 7); see ResultView's own
+    // doc comment.
+    void updateSelectedStats(const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs)
+    {
+        resultView_.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
+    }
+    void updateSelectedInfo(const std::string& hash, const librats::Json& info)
+    {
+        resultView_.updateSelectedInfo(hash, info);
+    }
 
 private:
     void triggerSearch();

@@ -45,7 +45,7 @@ Element renderTabBar(int tabIndex)
 
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
     engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, engine::DownloadManager* downloads,
-    const platform::Config& cfg, const StatusInfo& info)
+    engine::TrackerService* trackerService, const platform::Config& cfg, const StatusInfo& info)
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
@@ -111,10 +111,30 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
         });
     }
 
-    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, downloads, cfg, info.dataDir);
+    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, downloads, trackerService, cfg, info.dataDir);
     Component searchComponent = searchTab.component();
-    TopTab topTab(engineLoop, index, screen, nodeHost, downloads, info.dataDir);
+    TopTab topTab(engineLoop, index, screen, nodeHost, downloads, trackerService, info.dataDir);
     Component topComponent = topTab.component();
+
+    // A tracker scrape completing flashes the matching row live in whichever
+    // tab currently holds it (docs/M8-PLAN.md item 7/deviation #4) -- fires
+    // on the engine thread, so marshal before touching either tab (same
+    // idiom as the download-completion callback below).
+    if (trackerService) {
+        trackerService->setStatsUpdatedCallback(
+            [&screen, &searchTab, &topTab](const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs) {
+                screen.Post([&searchTab, &topTab, hash, seeders, leechers, completed, trackersCheckedMs] {
+                    searchTab.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
+                    topTab.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
+                });
+            });
+        trackerService->setInfoUpdatedCallback([&screen, &searchTab, &topTab](const std::string& hash, const librats::Json& info) {
+            screen.Post([&searchTab, &topTab, hash, info] {
+                searchTab.updateSelectedInfo(hash, info);
+                topTab.updateSelectedInfo(hash, info);
+            });
+        });
+    }
     DownloadsTab downloadsTab(engineLoop, screen, downloads);
     Component downloadsComponent = downloadsTab.component();
     Component statusComponent = Renderer([&statusModel, &info] { return renderStatusTab(statusModel, info); });

@@ -4,6 +4,7 @@
 #include "engine/downloads.h"
 #include "engine/node_host.h"
 #include "engine/peer_api.h"
+#include "engine/tracker_service.h"
 #include "index/search_index.h"
 #include "platform/config.h"
 #include "platform/engine_loop.h"
@@ -28,10 +29,12 @@ namespace ratsn::tui {
 // called. index, nodeHost, crawler, peerApi and downloads are borrowed and
 // must outlive this call; nodeHost/crawler/peerApi are null when the
 // spider/mesh is disabled, downloads is null when the BitTorrent client
-// never came up (see main.cpp's EnginePipeline). cfg supplies the Search
-// tab's strict/safe-search defaults (docs/M5-PLAN.md item 1).
+// never came up (see main.cpp's EnginePipeline). trackerService is borrowed
+// (docs/M8-PLAN.md item 7); non-null in practice (M8's scrapers need no
+// NodeHost/BitTorrent client and are always constructed). cfg supplies the
+// Search tab's strict/safe-search defaults (docs/M5-PLAN.md item 1).
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
     engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, engine::DownloadManager* downloads,
-    const platform::Config& cfg, const StatusInfo& info);
+    engine::TrackerService* trackerService, const platform::Config& cfg, const StatusInfo& info);
 
 } // namespace ratsn::tui

@@ -70,6 +70,16 @@ Config Config::load(const std::filesystem::path& path)
     cfg.safeSearch = j.value("safeSearch", cfg.safeSearch);
     cfg.strictSearch = j.value("strictSearch", cfg.strictSearch);
     cfg.trackerRequireKnown = j.value("trackerRequireKnown", cfg.trackerRequireKnown);
+    // "trackers" used to be (mistakenly, and unused by any engine code) an
+    // array of tracker URLs here; it's now Qt's actual "trackers" key, a
+    // bool. A datadir carrying the old array shape from a pre-M8 native
+    // build must not crash Config::load's "never throws" contract -- Json::
+    // get<bool>() throws on a non-boolean value, so check the type first and
+    // fall back to the default (matches every other key's "malformed ->
+    // default" handling here).
+    if (const librats::Json* trackersFlag = j.as_object().find("trackers"); trackersFlag && trackersFlag->is_boolean())
+        cfg.trackersEnabled = trackersFlag->get<bool>();
+    cfg.siteScraper = j.value("siteScraper", cfg.siteScraper);
     cfg.indexMaxTorrents = j.value("indexMaxTorrents", cfg.indexMaxTorrents);
     cfg.fileIndex = j.value("fileIndex", cfg.fileIndex);
 
@@ -82,11 +92,6 @@ Config Config::load(const std::filesystem::path& path)
     if (cfg.indexMaxTorrents < 0)
         cfg.indexMaxTorrents = 0;
 
-    if (const librats::Json* trackers = j.as_object().find("trackers"); trackers && trackers->is_array()) {
-        cfg.trackers.clear();
-        for (const auto& t : *trackers)
-            cfg.trackers.push_back(t.get<std::string>());
-    }
     if (const librats::Json* allow = j.as_object().find("trackerAllow"); allow && allow->is_array()) {
         cfg.trackerAllow.clear();
         for (const auto& t : *allow)
@@ -122,11 +127,8 @@ bool Config::save(const std::filesystem::path& path) const
     j["trackerRequireKnown"] = trackerRequireKnown;
     j["indexMaxTorrents"] = indexMaxTorrents;
     j["fileIndex"] = fileIndex;
-
-    librats::Json trackersJson = librats::Json::array();
-    for (const auto& t : trackers)
-        trackersJson.push_back(t);
-    j["trackers"] = std::move(trackersJson);
+    j["trackers"] = trackersEnabled;
+    j["siteScraper"] = siteScraper;
 
     librats::Json trackerAllowJson = librats::Json::array();
     for (const auto& t : trackerAllow)

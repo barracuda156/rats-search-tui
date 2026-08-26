@@ -4,6 +4,7 @@
 #include "engine/downloads.h"
 #include "engine/node_host.h"
 #include "engine/torrent_file.h"
+#include "engine/tracker_service.h"
 #include "platform/log.h"
 #include "tui/format.h"
 
@@ -20,11 +21,12 @@ using namespace ftxui;
 namespace ratsn::tui {
 
 ResultView::ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
-    engine::DownloadManager* downloads, std::string dataDir)
+    engine::DownloadManager* downloads, engine::TrackerService* trackerService, std::string dataDir)
     : engineLoop_(engineLoop)
     , screen_(screen)
     , nodeHost_(nodeHost)
     , downloads_(downloads)
+    , trackerService_(trackerService)
     , dataDir_(std::move(dataDir))
 {
 }
@@ -47,6 +49,12 @@ void ResultView::setResults(std::vector<domain::SearchHit> hits)
         resultLines_.push_back(formatResultLine(hit));
     selected_ = results_.empty() ? 0 : std::min(selected_, static_cast<int>(results_.size()) - 1);
     statusMessage_.clear();
+
+    // A fresh list also counts as "the details pane is now showing a
+    // torrent" (docs/M8-PLAN.md item 7) -- Menu's on_change only fires on
+    // subsequent navigation, so the newly-selected top result needs its own
+    // kick here.
+    onSelectionChanged();
 }
 
 void ResultView::append(domain::SearchHit hit)
@@ -79,8 +87,11 @@ Element ResultView::renderDetails() const
     lines.push_back(text(t.hash) | dim);
     lines.push_back(separatorEmpty());
     lines.push_back(hbox({ text("size: " + humanSize(t.size) + "   "), text("files: " + std::to_string(t.files)) }));
-    lines.push_back(hbox({ text("seeders: " + std::to_string(t.seeders) + "   "),
-        text("leechers: " + std::to_string(t.leechers) + "   "), text("completed: " + std::to_string(t.completed)) }));
+    std::string seedersText = "seeders: " + std::to_string(t.seeders);
+    if (t.trackersChecked > 0)
+        seedersText += " (checked " + humanAge(t.trackersChecked) + ")";
+    lines.push_back(hbox({ text(seedersText + "   "), text("leechers: " + std::to_string(t.leechers) + "   "),
+        text("completed: " + std::to_string(t.completed)) }));
     lines.push_back(text("added: " + humanDate(t.added)));
 
     std::string typeCat = domain::toString(t.contentType);
@@ -91,6 +102,32 @@ Element ResultView::renderDetails() const
         lines.push_back(text("type: " + typeCat));
 
     lines.push_back(text("votes: +" + std::to_string(t.good) + " / -" + std::to_string(t.bad)));
+
+    // Tracker-site metadata (docs/M8-PLAN.md item 7), when present.
+    if (t.info.is_object()) {
+        if (const librats::Json* desc = t.info.as_object().find("description");
+            desc && desc->is_string() && !desc->get<std::string>().empty()) {
+            lines.push_back(separatorEmpty());
+            lines.push_back(text("description:") | dim);
+            for (const std::string& wrapped : wrapText(desc->get<std::string>(), 70))
+                lines.push_back(text(wrapped));
+        }
+        if (const librats::Json* trackers = t.info.as_object().find("trackers");
+            trackers && trackers->is_array() && !trackers->empty()) {
+            std::string trackersLine = "trackers: ";
+            bool first = true;
+            for (const librats::Json& tr : *trackers) {
+                if (!tr.is_string())
+                    continue;
+                if (!first)
+                    trackersLine += ", ";
+                trackersLine += tr.get<std::string>();
+                first = false;
+            }
+            lines.push_back(separatorEmpty());
+            lines.push_back(text(trackersLine));
+        }
+    }
 
     if (hit.fromFileMatch && !hit.matchingPaths.empty()) {
         lines.push_back(separatorEmpty());
@@ -120,6 +157,7 @@ Component ResultView::menu()
     MenuOption option;
     option.entries = &resultLines_;
     option.selected = &selected_;
+    option.on_change = [this] { onSelectionChanged(); };
     return Menu(option);
 }
 
@@ -263,6 +301,60 @@ void ResultView::handleSaveTorrent()
             });
         });
     });
+}
+
+void ResultView::onSelectionChanged()
+{
+    if (!trackerService_ || results_.empty() || selected_ < 0 || selected_ >= static_cast<int>(results_.size()))
+        return;
+
+    const domain::Torrent& t = results_[static_cast<size_t>(selected_)].torrent;
+    const std::string hash = t.hash;
+    const std::string name = t.name;
+
+    // Site scrape only when we don't already have a tracker identity for
+    // this torrent (Qt's requestTrackerRefresh have-info condition).
+    bool haveInfo = false;
+    if (t.info.is_object()) {
+        if (const librats::Json* trackers = t.info.as_object().find("trackers"); trackers && trackers->is_array())
+            haveInfo = !trackers->empty();
+    }
+
+    engine::TrackerService* trackerService = trackerService_;
+    engineLoop_.post([trackerService, hash, name, haveInfo] {
+        trackerService->checkCounts(hash);
+        if (!haveInfo)
+            trackerService->checkInfo(hash, name);
+    });
+}
+
+void ResultView::updateSelectedStats(
+    const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs)
+{
+    for (size_t i = 0; i < results_.size(); ++i) {
+        if (results_[i].torrent.hash != hash)
+            continue;
+        domain::Torrent& t = results_[i].torrent;
+        t.seeders = seeders;
+        t.leechers = leechers;
+        t.completed = completed;
+        t.trackersChecked = trackersCheckedMs;
+        resultLines_[i] = formatResultLine(results_[i]);
+        return;
+    }
+}
+
+void ResultView::updateSelectedInfo(const std::string& hash, const librats::Json& info)
+{
+    for (domain::SearchHit& hit : results_) {
+        if (hit.torrent.hash != hash)
+            continue;
+        if (!hit.torrent.info.is_object())
+            hit.torrent.info = librats::Json::object();
+        for (const auto& [key, value] : info.as_object())
+            hit.torrent.info[key] = value;
+        return;
+    }
 }
 
 } // namespace ratsn::tui

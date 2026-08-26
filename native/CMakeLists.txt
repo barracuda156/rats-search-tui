@@ -27,8 +27,14 @@ option(RATSN_USE_SYSTEM_LIBRATS "Link an installed librats via find_package() in
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GROONGA REQUIRED IMPORTED_TARGET groonga)
-# filter_policy's naming-regex filter (no Qt QRegularExpression available).
+# filter_policy's naming-regex filter and engine/site_scraper's HTML parsing
+# (no Qt QRegularExpression available).
 pkg_check_modules(PCRE2 REQUIRED IMPORTED_TARGET libpcre2-8)
+# engine/site_scraper's tracker-website HTTP fetches (docs/M8-PLAN.md: hard
+# build dependency as of M8, not a CMake option -- see the plan's
+# dependency-policy note). No Qt equivalent to mirror -- QNetworkAccessManager
+# is a Qt-internal transport with no standalone C library.
+pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
 
 if(RATSN_USE_SYSTEM_LIBRATS)
     find_package(rats CONFIG REQUIRED)
@@ -105,9 +111,13 @@ add_library(ratsn_core STATIC
     engine/peer_api.cpp
     engine/replication.cpp
     engine/torrent_file.cpp
+    engine/swarm_scraper.cpp
+    engine/site_scraper.cpp
+    engine/tracker_service.cpp
+    platform/worker_pool.cpp
 )
 target_include_directories(ratsn_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${RATSN_GENERATED_DIR})
-target_link_libraries(ratsn_core PUBLIC ${RATSN_LIBRATS_TARGET} PkgConfig::GROONGA PkgConfig::PCRE2)
+target_link_libraries(ratsn_core PUBLIC ${RATSN_LIBRATS_TARGET} PkgConfig::GROONGA PkgConfig::PCRE2 PkgConfig::CURL)
 if(RATSN_FILE_INDEX_DEFAULT)
     target_compile_definitions(ratsn_core PUBLIC RATSN_FILE_INDEX_DEFAULT=1)
 else()

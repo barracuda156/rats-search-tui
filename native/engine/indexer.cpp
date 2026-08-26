@@ -37,6 +37,8 @@ bool Indexer::handleDiscovered(domain::Torrent torrent)
 
     ++recordCount_;
     maybePrune();
+    if (onIndexed_)
+        onIndexed_(torrent.hash, torrent.name);
     return true;
 }
 

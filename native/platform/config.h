@@ -47,7 +47,14 @@ struct Config {
     // whenever p2pReplication is on (config_store.cpp ~148); same here.
     bool p2pReplicationServer = true;
     std::string downloadPath;
-    std::vector<std::string> trackers;
+    // Qt key "trackers" (src/app/config_store.cpp's trackersEnabled, default
+    // true): master gate for both tracker scrapers (docs/M8-PLAN.md item 6).
+    bool trackersEnabled = true;
+    // Native-only (docs/M8-PLAN.md item 6, deviation #2): additionally gates
+    // the heavier site-metadata half at runtime. trackersEnabled=false
+    // silences everything; trackersEnabled=true, siteScraper=false keeps
+    // cheap UDP swarm-count announces with zero HTTP traffic.
+    bool siteScraper = true;
     FilterConfig filters;
     bool safeSearch = false;
     // Native-only (docs/M5-PLAN.md item 1): default for SearchQuery::strict,

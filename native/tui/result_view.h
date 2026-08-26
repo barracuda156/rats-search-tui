@@ -14,6 +14,7 @@
 namespace ratsn::engine {
 class NodeHost;
 class DownloadManager;
+class TrackerService;
 }
 
 // Result-list + details-pane rendering shared by the Search and Top tabs
@@ -33,8 +34,12 @@ public:
     // cached/read (mirrors TorrentExporter's cache layout). downloads is
     // borrowed and nullable (null when the BitTorrent client never came up
     // -- 'd' then always reports "not available", docs/M6-PLAN.md item 5).
+    // trackerService is borrowed (docs/M8-PLAN.md item 7); non-null in
+    // practice (the scrapers need no NodeHost/BitTorrent client and are
+    // always constructed) but treated as nullable here for the same
+    // defensive reason as the pointers above.
     ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
-        engine::DownloadManager* downloads, std::string dataDir);
+        engine::DownloadManager* downloads, engine::TrackerService* trackerService, std::string dataDir);
 
     // Replaces the whole result set (a fresh search/top query). UI-thread
     // only (see the .cpp -- mirrors the old SearchTab::applyResults).
@@ -57,16 +62,29 @@ public:
     // CatchEvent should apply its focus guard first, then delegate here.
     bool handleKey(ftxui::Event event);
 
+    // In-place refresh when a tracker scrape completes for a hash currently
+    // held in this view's result set (docs/M8-PLAN.md item 7/deviation #4 --
+    // the native stand-in for Qt's torrentUpdated signal + full panel
+    // reload). UI-thread only; the caller (app.cpp) marshals via screen.Post.
+    // No-op if the hash isn't in the current result set (e.g. the view has
+    // since reloaded).
+    void updateSelectedStats(const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs);
+    void updateSelectedInfo(const std::string& hash, const librats::Json& info);
+
 private:
     ftxui::Element renderDetails() const;
     std::string formatResultLine(const domain::SearchHit& hit) const;
     void handleSaveTorrent();
     void handleDownload();
+    // Menu's on_change hook (docs/M8-PLAN.md item 7): posts checkCounts always,
+    // checkInfo only when the selected torrent has no tracker identity yet.
+    void onSelectionChanged();
 
     platform::EngineLoop& engineLoop_;
     ftxui::ScreenInteractive& screen_;
     engine::NodeHost* nodeHost_;
     engine::DownloadManager* downloads_;
+    engine::TrackerService* trackerService_;
     std::string dataDir_;
 
     std::vector<domain::SearchHit> results_;
