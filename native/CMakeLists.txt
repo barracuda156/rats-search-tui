@@ -61,6 +61,15 @@ else()
     # The crawler (native/engine/crawler.*) needs the BitTorrent subsystem
     # (spider mode + BEP9 metadata fetch) compiled into librats.
     set(RATS_SEARCH_FEATURES ON CACHE BOOL "" FORCE)
+    # The distributed key/value store (native/engine/p2p_store.*, votes/feed,
+    # docs/M7-PLAN.md) needs librats' StorageManager -- default OFF upstream,
+    # mirrors the Qt superbuild's root CMakeLists.txt forcing this on. When
+    # RATSN_USE_SYSTEM_LIBRATS is used instead, the installed librats package
+    # must already have been built with this (see docs/M7-PLAN.md's build
+    # prerequisite) -- there is no ratsn-side flag for that path since the
+    # PUBLIC RATS_STORAGE compile definition librats itself sets propagates
+    # through the exported rats::rats target automatically.
+    set(RATS_STORAGE ON CACHE BOOL "" FORCE)
     add_subdirectory(${RATS_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/librats)
     set(RATSN_LIBRATS_TARGET rats)
 endif()
@@ -115,6 +124,9 @@ add_library(ratsn_core STATIC
     engine/site_scraper.cpp
     engine/tracker_service.cpp
     platform/worker_pool.cpp
+    engine/p2p_store.cpp
+    engine/voting.cpp
+    engine/feed.cpp
 )
 target_include_directories(ratsn_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${RATSN_GENERATED_DIR})
 target_link_libraries(ratsn_core PUBLIC ${RATSN_LIBRATS_TARGET} PkgConfig::GROONGA PkgConfig::PCRE2 PkgConfig::CURL)
@@ -144,6 +156,7 @@ if(RATSN_WITH_TUI)
         tui/downloads_tab.cpp
         tui/result_view.cpp
         tui/status_bar.cpp
+        tui/feed_tab.cpp
     )
     target_link_libraries(ratsn_core PUBLIC ftxui::ftxui)
     target_compile_definitions(ratsn_core PUBLIC RATSN_WITH_TUI=1)

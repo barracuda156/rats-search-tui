@@ -11,6 +11,9 @@
 #include "librats/subsystems/peer_exchange.h"
 #include "librats/subsystems/port_mapping_service.h"
 #include "librats/subsystems/reconnection.h"
+#ifdef RATS_STORAGE
+#include "librats/storage/storage.h"
+#endif
 
 #ifndef RATS_SEARCH_FEATURES
 #error "ratsn's crawler (M2) needs librats built with -DRATS_SEARCH_FEATURES=ON. \
@@ -109,6 +112,18 @@ bool NodeHost::start()
         pex_ = node_->add_subsystem(std::make_unique<librats::PeerExchange>(std::move(pexCfg)));
     }
 
+    // Distributed key/value store (votes, M7). Gated on librats having been
+    // built with RATS_STORAGE (default OFF there) -- see docs/M7-PLAN.md's
+    // build prerequisite; without it, votes degrade to local-only counts
+    // (P2PStore::isAvailable() reports false).
+#ifdef RATS_STORAGE
+    {
+        librats::StorageConfig sc;
+        sc.data_directory = (dataDir_ / "storage").string();
+        storage_ = node_->add_subsystem(std::make_unique<librats::StorageManager>(sc));
+    }
+#endif
+
     // client_info handshake: must be wired before node_->start() per
     // node.h's documented contract on Node::on_peer_connected/disconnected.
     peerRegistry_ = std::make_unique<PeerRegistry>(*node_, *messages_, engineLoop_, clientVersion_);
@@ -122,6 +137,7 @@ bool NodeHost::start()
         portMapping_ = nullptr;
         holePunch_ = nullptr;
         pex_ = nullptr;
+        storage_ = nullptr;
         peerRegistry_.reset();
         return false;
     }
@@ -145,6 +161,7 @@ void NodeHost::stop()
     portMapping_ = nullptr;
     holePunch_ = nullptr;
     pex_ = nullptr;
+    storage_ = nullptr;
     peerRegistry_.reset();
     running_ = false;
 }

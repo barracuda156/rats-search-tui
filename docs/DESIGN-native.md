@@ -113,8 +113,9 @@ native/
               indexer.*             dedup → classify → filter → insert       ~250
               peer_api.*            wire handlers + remote search fan-out    ~600
               downloads.*           BT client wrapper + downloads.json       ~450
-              store.*               votes/feed on StorageManager (M6)        ~500
-  tui/        app.*  search_tab.*  downloads_tab.* top_tab.* status_bar.*   ~1800
+              p2p_store.* voting.* feed.*   votes/feed on StorageManager (M7) ~500
+  tui/        app.*  search_tab.*  downloads_tab.* top_tab.* feed_tab.*
+              status_bar.*                                                  ~1800
   main.cpp    CLI parsing, mode select, signal handling                      ~200
                                                               total  ≈ 6.7k loc
 ```

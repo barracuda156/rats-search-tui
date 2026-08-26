@@ -39,4 +39,9 @@ std::filesystem::path downloadsFile(const std::filesystem::path& data_dir)
     return data_dir / "torrents_session.json";
 }
 
+std::filesystem::path feedFile(const std::filesystem::path& data_dir)
+{
+    return data_dir / "feed.json";
+}
+
 } // namespace ratsn::platform

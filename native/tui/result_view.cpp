@@ -5,6 +5,7 @@
 #include "engine/node_host.h"
 #include "engine/torrent_file.h"
 #include "engine/tracker_service.h"
+#include "engine/voting.h"
 #include "platform/log.h"
 #include "tui/format.h"
 
@@ -21,12 +22,14 @@ using namespace ftxui;
 namespace ratsn::tui {
 
 ResultView::ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
-    engine::DownloadManager* downloads, engine::TrackerService* trackerService, std::string dataDir)
+    engine::DownloadManager* downloads, engine::TrackerService* trackerService, engine::Voting* voting,
+    std::string dataDir)
     : engineLoop_(engineLoop)
     , screen_(screen)
     , nodeHost_(nodeHost)
     , downloads_(downloads)
     , trackerService_(trackerService)
+    , voting_(voting)
     , dataDir_(std::move(dataDir))
 {
 }
@@ -93,6 +96,8 @@ Element ResultView::renderDetails() const
     lines.push_back(hbox({ text(seedersText + "   "), text("leechers: " + std::to_string(t.leechers) + "   "),
         text("completed: " + std::to_string(t.completed)) }));
     lines.push_back(text("added: " + humanDate(t.added)));
+    if (hit.feedDate > 0)
+        lines.push_back(text("feed date: " + humanDate(hit.feedDate * 1000)));
 
     std::string typeCat = domain::toString(t.contentType);
     const std::string cat = domain::toString(t.contentCategory);
@@ -211,6 +216,14 @@ bool ResultView::handleKey(ftxui::Event event)
         handleDownload();
         return true;
     }
+    if (event == Event::Character('v')) {
+        handleVote(true);
+        return true;
+    }
+    if (event == Event::Character('V')) {
+        handleVote(false);
+        return true;
+    }
     return false;
 }
 
@@ -238,6 +251,57 @@ void ResultView::handleDownload()
                 = ok ? ("downloading: " + hash.substr(0, 8) + "...") : ("already downloading: " + hash.substr(0, 8) + "...");
         });
     });
+}
+
+void ResultView::handleVote(bool good)
+{
+    const std::string hash = results_[static_cast<size_t>(selected_)].torrent.hash;
+
+    if (!voting_) {
+        statusMessage_ = "vote failed: voting not available";
+        return;
+    }
+
+    statusMessage_ = "voting...";
+    platform::log() << "ResultView: vote requested for " << hash.substr(0, 8) << " good=" << (good ? "true" : "false")
+                     << "\n";
+
+    // Voting is confined to the EngineLoop thread (docs/M7-PLAN.md item 3),
+    // same idiom as handleDownload/handleSaveTorrent above.
+    engine::Voting* voting = voting_;
+    engineLoop_.post([this, voting, hash, good] {
+        voting->vote(hash, good, [this, hash](bool ok, const librats::Json& result, const std::string& error) {
+            const int goodCount = result.value("good", 0);
+            const int badCount = result.value("bad", 0);
+            const bool alreadyVoted = result.value("alreadyVoted", false);
+
+            std::string message;
+            if (!ok)
+                message = "vote failed: " + error;
+            else if (alreadyVoted)
+                message = "already voted (" + std::to_string(goodCount) + " good / " + std::to_string(badCount) + " bad)";
+            else
+                message = "voted: " + std::to_string(goodCount) + " good / " + std::to_string(badCount) + " bad";
+
+            platform::log() << "ResultView: vote " << hash.substr(0, 8) << ": " << message << "\n";
+            screen_.Post([this, hash, message, ok, goodCount, badCount] {
+                statusMessage_ = message;
+                if (ok)
+                    updateSelectedVotes(hash, goodCount, badCount);
+            });
+        });
+    });
+}
+
+void ResultView::updateSelectedVotes(const std::string& hash, int good, int bad)
+{
+    for (domain::SearchHit& hit : results_) {
+        if (hit.torrent.hash != hash)
+            continue;
+        hit.torrent.good = good;
+        hit.torrent.bad = bad;
+        return;
+    }
 }
 
 void ResultView::handleSaveTorrent()

@@ -52,6 +52,7 @@ public:
 
     bool updateStats(const std::string& hash, int seeders, int leechers, int completed) override;
     bool mergeInfo(const std::string& hash, const librats::Json& info) override;
+    bool updateVotes(const std::string& hash, int good, int bad) override;
     IndexStats counts() override;
     std::vector<std::string> lowestValueHashes(int limit) override;
 

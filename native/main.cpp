@@ -1,14 +1,17 @@
 #include "domain/torrent_codec.h"
 #include "engine/crawler.h"
 #include "engine/downloads.h"
+#include "engine/feed.h"
 #include "engine/indexer.h"
 #include "engine/node_host.h"
+#include "engine/p2p_store.h"
 #include "engine/peer_api.h"
 #include "engine/peer_registry.h"
 #include "engine/replication.h"
 #include "engine/site_scraper.h"
 #include "engine/swarm_scraper.h"
 #include "engine/tracker_service.h"
+#include "engine/voting.h"
 #include "index/groonga_index.h"
 #include "platform/config.h"
 #include "platform/engine_loop.h"
@@ -247,6 +250,14 @@ struct EnginePipeline {
     std::unique_ptr<ratsn::engine::SwarmScraper> swarmScraper;
     std::unique_ptr<ratsn::engine::TrackerSiteScraper> siteScraper;
     std::unique_ptr<ratsn::engine::TrackerService> trackerService;
+    // Votes + feed (M7): also constructed unconditionally. P2PStore degrades
+    // to permanently-unavailable when nodeHost->start() failed or librats
+    // lacks RATS_STORAGE (votes then fall back to local columns, Qt
+    // parity); Feed works locally and over the wire either way (it does not
+    // depend on storage).
+    std::unique_ptr<ratsn::engine::P2PStore> p2pStore;
+    std::unique_ptr<ratsn::engine::Voting> voting;
+    std::unique_ptr<ratsn::engine::Feed> feed;
 };
 
 EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::path& dataDir, GroongaIndex& index, EngineLoop& loop)
@@ -270,8 +281,24 @@ EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::pat
     });
 
     p.nodeHost = std::make_unique<ratsn::engine::NodeHost>(cfg, dataDir, loop, kClientVersion);
-    if (!p.nodeHost->start()) {
+    const bool nodeStarted = p.nodeHost->start();
+    if (!nodeStarted)
         std::cerr << "ratsn: failed to start node/DHT; spider/mesh/downloads disabled\n";
+
+    // Votes + feed (M7). Constructed before the possible nodeHost reset
+    // below, since P2PStore takes nodeHost as a raw pointer whose lifetime it
+    // depends on for as long as it's non-null -- passing nullptr up front
+    // when the start failed keeps it permanently (and safely) unavailable
+    // instead of risking a dangling pointer.
+    p.p2pStore = std::make_unique<ratsn::engine::P2PStore>(nodeStarted ? p.nodeHost.get() : nullptr, loop);
+    p.voting = std::make_unique<ratsn::engine::Voting>(*p.p2pStore, index);
+    p.feed = std::make_unique<ratsn::engine::Feed>(index, loop, ratsn::platform::feedFile(dataDir).string());
+    ratsn::engine::Feed* feedPtr = p.feed.get();
+    // votesUpdated -> feed->addByHash (application.cpp:206's connect): the
+    // ONLY entry path into the feed.
+    p.voting->setVotesUpdatedCallback([feedPtr](const std::string& hash, int, int) { feedPtr->addByHash(hash); });
+
+    if (!nodeStarted) {
         p.nodeHost.reset();
         p.downloads = std::make_unique<ratsn::engine::DownloadManager>(nullptr, loop, resolveDownloadPath(cfg, dataDir));
         return p;
@@ -302,7 +329,7 @@ EnginePipeline startEnginePipeline(const Config& cfg, const std::filesystem::pat
             p.replication->start();
 
         p.peerApi = std::make_unique<ratsn::engine::PeerApi>(
-            *messages, index, *p.indexer, loop, p.replication.get(), cfg.p2pReplicationServer);
+            *messages, index, *p.indexer, loop, p.replication.get(), cfg.p2pReplicationServer, p.feed.get());
         if (std::getenv("RATSN_WIRE_DUMP"))
             p.peerApi->enableWireDump(dataDir);
 
@@ -389,6 +416,7 @@ int cmdConsole(std::vector<std::string> args)
     const std::filesystem::path sessionFile = ratsn::platform::downloadsFile(dataDir);
     pipeline.downloads->loadSession(sessionFile.string());
     pipeline.downloads->start(sessionFile.string());
+    pipeline.feed->load();
 
     const auto stats = index->counts();
     std::cout << "ratsn --console: data dir " << dataDir.string() << ", fileIndex=" << (cfg.fileIndex ? "on" : "off")
@@ -412,6 +440,8 @@ int cmdConsole(std::vector<std::string> args)
     // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
     pipeline.downloads->stop();
     pipeline.downloads->saveSession(sessionFile.string());
+    // Feed save before the node stops too (application.cpp:277's ordering).
+    pipeline.feed->save();
     if (pipeline.nodeHost)
         pipeline.nodeHost->stop();
 
@@ -463,6 +493,7 @@ int cmdTui(std::vector<std::string> args)
     const std::filesystem::path sessionFile = ratsn::platform::downloadsFile(dataDir);
     pipeline.downloads->loadSession(sessionFile.string());
     pipeline.downloads->start(sessionFile.string());
+    pipeline.feed->load();
 
     ratsn::tui::StatusInfo info;
     info.dataDir = dataDir.string();
@@ -476,7 +507,7 @@ int cmdTui(std::vector<std::string> args)
     std::thread engineThread([&loop] { loop.run(); });
     // Stops and joins engineThread itself before returning -- see tui/app.cpp.
     ratsn::tui::run(loop, engineThread, *index, pipeline.nodeHost.get(), pipeline.crawler.get(), pipeline.peerApi.get(),
-        pipeline.downloads.get(), pipeline.trackerService.get(), cfg, info);
+        pipeline.downloads.get(), pipeline.trackerService.get(), pipeline.voting.get(), pipeline.feed.get(), cfg, info);
 
     if (pipeline.crawler)
         pipeline.crawler->stop();
@@ -490,6 +521,8 @@ int cmdTui(std::vector<std::string> args)
     // mirrors application.cpp's shutdown ordering (docs/M6-PLAN.md item 4).
     pipeline.downloads->stop();
     pipeline.downloads->saveSession(sessionFile.string());
+    // Feed save before the node stops too (application.cpp:277's ordering).
+    pipeline.feed->save();
     if (pipeline.nodeHost)
         pipeline.nodeHost->stop();
 

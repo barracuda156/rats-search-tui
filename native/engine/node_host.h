@@ -17,6 +17,7 @@ class ReconnectionService;
 class PeerExchange;
 class PortMappingService;
 class HolePunch;
+class StorageManager;
 }
 
 namespace ratsn::platform {
@@ -30,14 +31,15 @@ class PeerRegistry;
 // Owns the librats Node for both the DHT-crawl + BEP9-metadata pipeline (M2)
 // and, as of M4, the P2P mesh: MessageJson (the on()/send() surface PeerApi
 // and Replication build on), ReconnectionService, PeerExchange, and the
-// config-gated PortMappingService/HolePunch. Config values are ported from
-// src/net/p2p_transport.cpp's node setup (see docs/M4-PLAN.md).
+// config-gated PortMappingService/HolePunch. As of M7, also the distributed
+// StorageManager (votes) when librats was built with RATS_STORAGE. Config
+// values are ported from src/net/p2p_transport.cpp's node setup (see
+// docs/M4-PLAN.md).
 //
-// MdnsDiscovery and StorageManager remain unattached (see
-// docs/DESIGN-native.md §4/§10): LAN discovery isn't needed for M4's
-// acceptance check (a debug --connect flag substitutes, since DHT-based
-// mesh discovery is slow/flaky for a 2-node lab -- see main.cpp), and
-// StorageManager is a genuine M6 (votes) concern.
+// MdnsDiscovery remains unattached (see docs/DESIGN-native.md §4/§10): LAN
+// discovery isn't needed for M4's acceptance check (a debug --connect flag
+// substitutes, since DHT-based mesh discovery is slow/flaky for a 2-node lab
+// -- see main.cpp).
 class NodeHost {
 public:
     // engineLoop is borrowed (non-owning) and must outlive this object --
@@ -60,6 +62,10 @@ public:
     librats::Node* node() const { return node_.get(); }
     librats::MessageJson* messageJson() const { return messages_; }
     PeerRegistry* peerRegistry() const { return peerRegistry_.get(); }
+    // Null when librats wasn't built with RATS_STORAGE, or the node never
+    // started (docs/M7-PLAN.md item 1). P2PStore::isAvailable() is the
+    // documented way callers should check this.
+    librats::StorageManager* storage() const { return storage_; }
 
     size_t peerCount() const;
     std::string ourPeerId() const; // full hex; nodeIdShort() below is for display
@@ -102,6 +108,7 @@ private:
     librats::PeerExchange* pex_ = nullptr;
     librats::PortMappingService* portMapping_ = nullptr;
     librats::HolePunch* holePunch_ = nullptr;
+    librats::StorageManager* storage_ = nullptr;
     std::unique_ptr<PeerRegistry> peerRegistry_;
     bool running_ = false;
 };

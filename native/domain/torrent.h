@@ -50,6 +50,9 @@ struct SearchHit {
     std::vector<std::string> matchingPaths; // highlighted file-path snippets
     std::string sourcePeerId; // non-empty if this hit came from a remote peer
     bool remote = false;
+    // Seconds since the Unix epoch this torrent entered the feed (docs/
+    // M7-PLAN.md item 7); 0 outside a feed listing.
+    int64_t feedDate = 0;
 };
 
 } // namespace ratsn::domain

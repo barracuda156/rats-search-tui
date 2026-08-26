@@ -18,6 +18,7 @@ namespace ratsn::engine {
 class NodeHost;
 class DownloadManager;
 class TrackerService;
+class Voting;
 }
 
 // The Top tab (docs/M5-PLAN.md item 5): content-type + time-window toggles
@@ -35,7 +36,7 @@ public:
     // outlive this object.
     TopTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
         engine::NodeHost* nodeHost, engine::DownloadManager* downloads, engine::TrackerService* trackerService,
-        std::string dataDir);
+        engine::Voting* voting, std::string dataDir);
 
     ftxui::Component component();
 

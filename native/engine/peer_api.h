@@ -23,6 +23,7 @@ namespace ratsn::engine {
 
 class Indexer;
 class Replication;
+class Feed;
 
 // The P2P front-end. Mirrors Qt's PeerApi (src/peer/peer_api.{h,cpp}): answers
 // other peers' requests (search/files/top/torrent/feed/randomTorrents) by
@@ -46,9 +47,12 @@ public:
     // every newly inserted torrent that counts toward its cycle accounting,
     // and its isEnabled() gates the connect-time replication kick.
     // replicationServerEnabled gates whether randomTorrents requests from
-    // other peers are answered at all (Qt key p2pReplicationServer).
+    // other peers are answered at all (Qt key p2pReplicationServer). feed is
+    // borrowed and nullable (docs/M7-PLAN.md item 5) -- null keeps answering
+    // the empty stub shape, so a spider-only/no-feed configuration still
+    // responds.
     PeerApi(librats::MessageJson& messages, index::SearchIndex& index, Indexer& indexer,
-        platform::EngineLoop& engineLoop, Replication* replication, bool replicationServerEnabled);
+        platform::EngineLoop& engineLoop, Replication* replication, bool replicationServerEnabled, Feed* feed);
 
     // A remote peer sent a search/file-search hit. Fired on the EngineLoop
     // thread; the TUI marshals onward to the UI thread itself (see
@@ -65,10 +69,10 @@ public:
         bool safeSearch, const std::string& contentType, bool searchFiles);
 
     // Peer lifecycle follow-up: call once per newly connected peer (wired via
-    // PeerRegistry::setPeerConnectedCallback, see node_host.cpp). Asks for an
-    // initial replication batch when replication is enabled. The Qt original
-    // also pulls the peer's feed here; omitted -- TODO(M6), no FeedService
-    // yet to receive it.
+    // PeerRegistry::setPeerConnectedCallback, see node_host.cpp). Pulls the
+    // peer's feed for P2P feed sync (when feed_ is non-null), then asks for
+    // an initial replication batch when replication is enabled -- same order
+    // as Qt's onPeerConnected (peer_api.cpp ~358).
     void onPeerConnected(const std::string& peerIdHex);
 
     // Fixture capture for the golden-file tests (docs/M4-PLAN.md): once
@@ -113,6 +117,7 @@ private:
     platform::EngineLoop& engineLoop_;
     Replication* replication_;
     bool replicationServerEnabled_;
+    Feed* feed_;
 
     SearchResultCallback onSearchResult_;
     SearchResultCallback onFileSearchResult_;

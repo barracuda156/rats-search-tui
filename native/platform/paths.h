@@ -18,5 +18,9 @@ std::filesystem::path configFile(const std::filesystem::path& data_dir);
 // torrents_session.json (src/app/application.cpp), so the on-disk format
 // docs/M6-PLAN.md pins never has to invent its own filename.
 std::filesystem::path downloadsFile(const std::filesystem::path& data_dir);
+// Voted-torrents feed file (M7): native-only container -- the Qt app stores
+// the same item JSON as rows of a Manticore `feed` table, not a flat file
+// (docs/M7-PLAN.md deviation #2).
+std::filesystem::path feedFile(const std::filesystem::path& data_dir);
 
 } // namespace ratsn::platform

@@ -454,6 +454,20 @@ bool GroongaIndex::updateStats(const std::string& hash, int seeders, int leecher
     return !send(cmd, &err).is_null();
 }
 
+bool GroongaIndex::updateVotes(const std::string& hash, int good, int bad)
+{
+    librats::Json rec = librats::Json::object();
+    rec["_key"] = toLower(hash);
+    rec["good"] = good;
+    rec["bad"] = bad;
+    librats::Json values = librats::Json::array();
+    values.push_back(std::move(rec));
+
+    const std::string cmd = "load --table Torrents --values " + quoteToken(values.dump());
+    std::string err;
+    return !send(cmd, &err).is_null();
+}
+
 std::string GroongaIndex::readInfoRaw(const std::string& hash)
 {
     std::string cmd = "select --table Torrents";

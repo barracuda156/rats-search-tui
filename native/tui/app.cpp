@@ -1,6 +1,7 @@
 #include "tui/app.h"
 
 #include "tui/downloads_tab.h"
+#include "tui/feed_tab.h"
 #include "tui/search_tab.h"
 #include "tui/top_tab.h"
 
@@ -34,10 +35,11 @@ Element renderTabBar(int tabIndex)
     return hbox({
         label(0, "Search"),
         label(1, "Top"),
-        label(2, "Downloads"),
-        label(3, "Status"),
+        label(2, "Feed"),
+        label(3, "Downloads"),
+        label(4, "Status"),
         filler(),
-        text(" Tab: switch tab   /: search   d: download   q: quit ") | dim,
+        text(" Tab: switch tab   /: search   d: download   v/V: vote   q: quit ") | dim,
     });
 }
 
@@ -45,7 +47,8 @@ Element renderTabBar(int tabIndex)
 
 void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::SearchIndex& index,
     engine::NodeHost* nodeHost, engine::Crawler* crawler, engine::PeerApi* peerApi, engine::DownloadManager* downloads,
-    engine::TrackerService* trackerService, const platform::Config& cfg, const StatusInfo& info)
+    engine::TrackerService* trackerService, engine::Voting* voting, engine::Feed* feed, const platform::Config& cfg,
+    const StatusInfo& info)
 {
     // ScreenInteractive::Fullscreen() owns the terminal exclusively via the
     // alternate screen buffer and repaints it wholesale on every redraw.
@@ -111,29 +114,37 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
         });
     }
 
-    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, downloads, trackerService, cfg, info.dataDir);
+    SearchTab searchTab(engineLoop, index, screen, peerApi, nodeHost, downloads, trackerService, voting, cfg, info.dataDir);
     Component searchComponent = searchTab.component();
-    TopTab topTab(engineLoop, index, screen, nodeHost, downloads, trackerService, info.dataDir);
+    TopTab topTab(engineLoop, index, screen, nodeHost, downloads, trackerService, voting, info.dataDir);
     Component topComponent = topTab.component();
+    // feed is expected non-null (see app.h) -- always constructed by
+    // startEnginePipeline, degrading gracefully rather than becoming null.
+    FeedTab feedTab(engineLoop, *feed, screen, nodeHost, downloads, trackerService, voting, info.dataDir);
+    Component feedComponent = feedTab.component();
 
     // A tracker scrape completing flashes the matching row live in whichever
     // tab currently holds it (docs/M8-PLAN.md item 7/deviation #4) -- fires
-    // on the engine thread, so marshal before touching either tab (same
-    // idiom as the download-completion callback below).
+    // on the engine thread, so marshal before touching any tab (same idiom
+    // as the download-completion callback below).
     if (trackerService) {
         trackerService->setStatsUpdatedCallback(
-            [&screen, &searchTab, &topTab](const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs) {
-                screen.Post([&searchTab, &topTab, hash, seeders, leechers, completed, trackersCheckedMs] {
+            [&screen, &searchTab, &topTab, &feedTab](
+                const std::string& hash, int seeders, int leechers, int completed, int64_t trackersCheckedMs) {
+                screen.Post([&searchTab, &topTab, &feedTab, hash, seeders, leechers, completed, trackersCheckedMs] {
                     searchTab.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
                     topTab.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
+                    feedTab.updateSelectedStats(hash, seeders, leechers, completed, trackersCheckedMs);
                 });
             });
-        trackerService->setInfoUpdatedCallback([&screen, &searchTab, &topTab](const std::string& hash, const librats::Json& info) {
-            screen.Post([&searchTab, &topTab, hash, info] {
-                searchTab.updateSelectedInfo(hash, info);
-                topTab.updateSelectedInfo(hash, info);
+        trackerService->setInfoUpdatedCallback(
+            [&screen, &searchTab, &topTab, &feedTab](const std::string& hash, const librats::Json& info) {
+                screen.Post([&searchTab, &topTab, &feedTab, hash, info] {
+                    searchTab.updateSelectedInfo(hash, info);
+                    topTab.updateSelectedInfo(hash, info);
+                    feedTab.updateSelectedInfo(hash, info);
+                });
             });
-        });
     }
     DownloadsTab downloadsTab(engineLoop, screen, downloads);
     Component downloadsComponent = downloadsTab.component();
@@ -142,20 +153,26 @@ void run(platform::EngineLoop& engineLoop, std::thread& engineThread, index::Sea
     int tabIndex = 0;
     int priorTabIndex = 0;
     Component tabContent
-        = Container::Tab({ searchComponent, topComponent, downloadsComponent, statusComponent }, &tabIndex);
-    // Reload the Top tab's list on activation (docs/M5-PLAN.md item 5: "no
-    // polling") -- Container::Tab has no activation callback of its own, so
-    // this is checked once per frame in the top-level Renderer below instead.
-    // The Downloads tab needs no such hook: it polls on its own 1s timer
-    // regardless of which tab is visible (docs/M6-PLAN.md item 5), started
-    // once below alongside statusUpdater.
+        = Container::Tab({ searchComponent, topComponent, feedComponent, downloadsComponent, statusComponent }, &tabIndex);
+    // Reload the Top/Feed tabs' lists on activation (docs/M5-PLAN.md item 5:
+    // "no polling") -- Container::Tab has no activation callback of its own,
+    // so this is checked once per frame in the top-level Renderer below
+    // instead. The Feed tab also reloads when its feed has changed while
+    // already visible (docs/M7-PLAN.md item 7: a vote or feed-sync update),
+    // checked in the same place. The Downloads tab needs no such hook: it
+    // polls on its own 1s timer regardless of which tab is visible
+    // (docs/M6-PLAN.md item 5), started once below alongside statusUpdater.
 
-    constexpr int kTabCount = 4;
+    constexpr int kTabCount = 5;
     Component layout = Renderer(tabContent, [&] {
         if (tabIndex != priorTabIndex) {
             if (tabIndex == 1)
                 topTab.onActivated();
+            else if (tabIndex == 2)
+                feedTab.onActivated();
             priorTabIndex = tabIndex;
+        } else if (tabIndex == 2 && feedTab.needsReload()) {
+            feedTab.onActivated();
         }
         return vbox({
             renderTabBar(tabIndex),

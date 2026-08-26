@@ -68,6 +68,10 @@ public:
     // Shallow-merges `info`'s keys onto the row's existing `info` object
     // (docs/M8-PLAN.md item 4 -- port of data::TorrentRepository::mergeInfo).
     virtual bool mergeInfo(const std::string& hash, const librats::Json& info) = 0;
+    // Partial update of the good/bad vote columns only (docs/M7-PLAN.md item
+    // 3 -- port of data::TorrentRepository::update's good/bad columns, as
+    // used by VotingService's local-column mirroring).
+    virtual bool updateVotes(const std::string& hash, int good, int bad) = 0;
     virtual IndexStats counts() = 0;
 
     // Zero-seeder-oldest-first hashes, for Indexer's indexMaxTorrents pruning

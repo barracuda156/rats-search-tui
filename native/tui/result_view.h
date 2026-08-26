@@ -15,6 +15,7 @@ namespace ratsn::engine {
 class NodeHost;
 class DownloadManager;
 class TrackerService;
+class Voting;
 }
 
 // Result-list + details-pane rendering shared by the Search and Top tabs
@@ -37,9 +38,14 @@ public:
     // trackerService is borrowed (docs/M8-PLAN.md item 7); non-null in
     // practice (the scrapers need no NodeHost/BitTorrent client and are
     // always constructed) but treated as nullable here for the same
-    // defensive reason as the pointers above.
+    // defensive reason as the pointers above. voting is borrowed
+    // (docs/M7-PLAN.md item 7); non-null in practice (Voting is always
+    // constructed, degrading to local-only counts when storage is
+    // unavailable) but treated as nullable here for the same defensive
+    // reason.
     ResultView(platform::EngineLoop& engineLoop, ftxui::ScreenInteractive& screen, engine::NodeHost* nodeHost,
-        engine::DownloadManager* downloads, engine::TrackerService* trackerService, std::string dataDir);
+        engine::DownloadManager* downloads, engine::TrackerService* trackerService, engine::Voting* voting,
+        std::string dataDir);
 
     // Replaces the whole result set (a fresh search/top query). UI-thread
     // only (see the .cpp -- mirrors the old SearchTab::applyResults).
@@ -57,9 +63,10 @@ public:
     // as its own line) the statusMessage_ status line.
     ftxui::Element renderPane(const ftxui::Component& menuComponent) const;
 
-    // 'm'/'t'/'d' handling (docs/M5-PLAN.md items 5/6, docs/M6-PLAN.md item
-    // 5); returns true if the event was consumed. The caller's own
-    // CatchEvent should apply its focus guard first, then delegate here.
+    // 'm'/'t'/'d'/'v'/'V' handling (docs/M5-PLAN.md items 5/6, docs/M6-PLAN.md
+    // item 5, docs/M7-PLAN.md item 7); returns true if the event was
+    // consumed. The caller's own CatchEvent should apply its focus guard
+    // first, then delegate here.
     bool handleKey(ftxui::Event event);
 
     // In-place refresh when a tracker scrape completes for a hash currently
@@ -76,6 +83,8 @@ private:
     std::string formatResultLine(const domain::SearchHit& hit) const;
     void handleSaveTorrent();
     void handleDownload();
+    void handleVote(bool good);
+    void updateSelectedVotes(const std::string& hash, int good, int bad);
     // Menu's on_change hook (docs/M8-PLAN.md item 7): posts checkCounts always,
     // checkInfo only when the selected torrent has no tracker identity yet.
     void onSelectionChanged();
@@ -85,6 +94,7 @@ private:
     engine::NodeHost* nodeHost_;
     engine::DownloadManager* downloads_;
     engine::TrackerService* trackerService_;
+    engine::Voting* voting_;
     std::string dataDir_;
 
     std::vector<domain::SearchHit> results_;

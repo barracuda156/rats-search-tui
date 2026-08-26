@@ -1,6 +1,7 @@
 #include "engine/peer_api.h"
 
 #include "domain/torrent_codec.h"
+#include "engine/feed.h"
 #include "engine/indexer.h"
 #include "engine/replication.h"
 #include "platform/engine_loop.h"
@@ -53,13 +54,14 @@ std::string shortId(const std::string& peerId)
 } // namespace
 
 PeerApi::PeerApi(librats::MessageJson& messages, index::SearchIndex& index, Indexer& indexer,
-    platform::EngineLoop& engineLoop, Replication* replication, bool replicationServerEnabled)
+    platform::EngineLoop& engineLoop, Replication* replication, bool replicationServerEnabled, Feed* feed)
     : messages_(messages)
     , index_(index)
     , indexer_(indexer)
     , engineLoop_(engineLoop)
     , replication_(replication)
     , replicationServerEnabled_(replicationServerEnabled)
+    , feed_(feed)
 {
     // --- Requests we answer -------------------------------------------------
     on("searchTorrent", &PeerApi::handleSearchRequest);
@@ -234,14 +236,26 @@ void PeerApi::handleTorrentRequest(const std::string& peerIdHex, const librats::
 
 void PeerApi::handleFeedRequest(const std::string& peerIdHex, const librats::Json& /*data*/)
 {
-    // TODO(M6): no FeedService yet -- answer with an empty feed so a peer
-    // that asks doesn't wait on a reply that will never come.
-    platform::log() << "PeerApi: feed request from " << shortId(peerIdHex) << " (empty, TODO(M6))\n";
-
+    // The request payload is ignored (Qt does too, peer_api.cpp
+    // handleFeedRequest) -- feed_ is null when no Feed was constructed
+    // (spider-only/no-node configuration); answer with an empty feed rather
+    // than staying silent, so a peer that asks doesn't wait on a reply that
+    // will never come.
     librats::Json response = librats::Json::object();
-    response["feed"] = librats::Json::array();
-    response["feedDate"] = int64_t { 0 };
-    response["size"] = 0;
+    if (feed_) {
+        // Feed serialises each item without its file list already, so no
+        // per-item enrichment query is needed here.
+        response["feed"] = feed_->toJsonArray(0, feed_->size());
+        response["feedDate"] = feed_->feedDate();
+        response["size"] = feed_->size();
+    } else {
+        response["feed"] = librats::Json::array();
+        response["feedDate"] = int64_t { 0 };
+        response["size"] = 0;
+    }
+
+    platform::log() << "PeerApi: feed request from " << shortId(peerIdHex) << " -> " << response.value("size", 0)
+                     << " items\n";
     sendToPeer(peerIdHex, "feed_response", response);
 }
 
@@ -324,9 +338,35 @@ void PeerApi::handleTorrentResponse(const std::string& peerIdHex, const librats:
     insertFromPeer(data, /*trackReplication*/ true);
 }
 
-void PeerApi::handleFeedResponse(const std::string& /*peerIdHex*/, const librats::Json& /*data*/)
+void PeerApi::handleFeedResponse(const std::string& peerIdHex, const librats::Json& data)
 {
-    // TODO(M6): no FeedService yet to replace/merge into.
+    if (!feed_)
+        return;
+
+    const librats::Json* remoteFeedPtr = data.contains("feed") ? data.as_object().find("feed") : nullptr;
+    const librats::Json remoteFeed = remoteFeedPtr ? *remoteFeedPtr : librats::Json::array();
+    const int remoteSize = data.value("size", remoteFeed.is_array() ? static_cast<int>(remoteFeed.as_array().size()) : 0);
+    const int64_t remoteFeedDate = data.value("feedDate", int64_t { 0 });
+
+    const int localSize = feed_->size();
+    const int64_t localFeedDate = feed_->feedDate();
+
+    // Replace when the remote feed is strictly larger, or equal-sized but newer.
+    const bool replace = remoteSize > localSize || (remoteSize == localSize && remoteFeedDate > localFeedDate);
+    if (!replace)
+        return;
+
+    platform::log() << "PeerApi: replacing feed with " << remoteSize << " items from " << shortId(peerIdHex) << "\n";
+    feed_->fromJsonArray(remoteFeed, remoteFeedDate);
+
+    // Replicate the torrents behind the feed into the index. These
+    // deliberately do not count toward replication accounting.
+    if (remoteFeed.is_array()) {
+        for (const librats::Json& v : remoteFeed) {
+            if (v.is_object())
+                insertFromPeer(v, /*trackReplication*/ false);
+        }
+    }
 }
 
 void PeerApi::handleRandomTorrentsResponse(const std::string& peerIdHex, const librats::Json& data)
@@ -384,6 +424,15 @@ void PeerApi::broadcastSearch(const std::string& query, int limit, const std::st
 
 void PeerApi::onPeerConnected(const std::string& peerIdHex)
 {
+    // Pull the peer's feed for P2P feed sync (Qt order: feed pull first,
+    // peer_api.cpp ~367-374).
+    if (feed_) {
+        librats::Json data = librats::Json::object();
+        data["localSize"] = feed_->size();
+        data["localFeedDate"] = feed_->feedDate();
+        sendToPeer(peerIdHex, "feed", data);
+    }
+
     if (replication_ && replication_->isEnabled()) {
         librats::Json data = librats::Json::object();
         data["limit"] = 5;

@@ -53,12 +53,12 @@ std::vector<std::string> tokenizeCasefold(std::string text)
 
 SearchTab::SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
     engine::PeerApi* peerApi, engine::NodeHost* nodeHost, engine::DownloadManager* downloads,
-    engine::TrackerService* trackerService, const platform::Config& cfg, std::string dataDir)
+    engine::TrackerService* trackerService, engine::Voting* voting, const platform::Config& cfg, std::string dataDir)
     : engineLoop_(engineLoop)
     , index_(index)
     , screen_(screen)
     , peerApi_(peerApi)
-    , resultView_(engineLoop, screen, nodeHost, downloads, trackerService, std::move(dataDir))
+    , resultView_(engineLoop, screen, nodeHost, downloads, trackerService, voting, std::move(dataDir))
     , strict_(cfg.strictSearch)
     , safe_(cfg.safeSearch)
 {

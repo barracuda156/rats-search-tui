@@ -20,6 +20,7 @@ class PeerApi;
 class NodeHost;
 class DownloadManager;
 class TrackerService;
+class Voting;
 }
 
 // The Search tab (docs/DESIGN-native.md §7): a debounced search-as-you-type
@@ -42,7 +43,8 @@ public:
     // outlive this object.
     SearchTab(platform::EngineLoop& engineLoop, index::SearchIndex& index, ftxui::ScreenInteractive& screen,
         engine::PeerApi* peerApi, engine::NodeHost* nodeHost, engine::DownloadManager* downloads,
-        engine::TrackerService* trackerService, const platform::Config& cfg, std::string dataDir);
+        engine::TrackerService* trackerService, engine::Voting* voting, const platform::Config& cfg,
+        std::string dataDir);
 
     // Builds (once) and returns the tab's root component.
     ftxui::Component component();
