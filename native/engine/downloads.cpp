@@ -374,21 +374,39 @@ void deleteDownloadFiles(const Download& d)
     if (d.savePath.empty())
         return;
 
+    const std::filesystem::path base(d.savePath);
+    const std::string& basePrefix = base.native();
+    const auto underSavePath = [&basePrefix](const std::filesystem::path& p) {
+        return p.native().size() > basePrefix.size()
+            && p.native().compare(0, basePrefix.size(), basePrefix) == 0;
+    };
+
     std::error_code ec;
     std::vector<std::filesystem::path> dirs;
     for (const DownloadFile& f : d.files) {
-        const std::filesystem::path full = std::filesystem::path(d.savePath) / f.path;
+        const std::filesystem::path full = base / f.path;
+        // operator/ replaces the base outright when f.path is absolute --
+        // librats' combine_paths never does (it string-joins), so the
+        // written file always lands under savePath and a full path that
+        // doesn't must not be deleted (a hostile torrent's file list is
+        // attacker-controlled).
+        if (!underSavePath(full))
+            continue;
         std::filesystem::remove(full, ec);
-        std::filesystem::path parent = full.parent_path();
-        if (parent != std::filesystem::path(d.savePath))
-            dirs.push_back(std::move(parent));
+        // Every ancestor strictly below savePath, not just the immediate
+        // parent: a torrent whose files all live in subdirectories would
+        // otherwise leave its now-empty root directory behind.
+        for (std::filesystem::path parent = full.parent_path(); underSavePath(parent); parent = parent.parent_path())
+            dirs.push_back(parent);
     }
 
-    // Deepest-first so a chain of now-empty subdirectories collapses in one
-    // pass; remove() (not remove_all) refuses anything still non-empty, so a
-    // directory shared with other content is left alone.
+    // Descending lexicographic order puts every child before its parent (a
+    // chain of now-empty subdirectories collapses in one pass) and groups
+    // duplicates for unique(); remove() (not remove_all) refuses anything
+    // still non-empty, so a directory shared with other content is left
+    // alone.
     std::sort(dirs.begin(), dirs.end(),
-        [](const std::filesystem::path& a, const std::filesystem::path& b) { return a.native().size() > b.native().size(); });
+        [](const std::filesystem::path& a, const std::filesystem::path& b) { return b < a; });
     dirs.erase(std::unique(dirs.begin(), dirs.end()), dirs.end());
     for (const std::filesystem::path& dir : dirs)
         std::filesystem::remove(dir, ec);
