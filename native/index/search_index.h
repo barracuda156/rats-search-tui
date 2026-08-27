@@ -63,10 +63,14 @@ public:
     virtual std::vector<domain::Torrent> random(int limit) = 0;
 
     // Partial update of the tracker-scrape columns only; also stamps
-    // trackers_checked = now (docs/M8-PLAN.md item 4).
+    // trackers_checked = now (docs/M8-PLAN.md item 4). False (without
+    // writing) when no row with this hash exists -- scrape results arrive
+    // seconds after the request, so the row may have been pruned meanwhile,
+    // and a partial update must never create one (Qt's UPDATE semantics).
     virtual bool updateStats(const std::string& hash, int seeders, int leechers, int completed) = 0;
     // Shallow-merges `info`'s keys onto the row's existing `info` object
     // (docs/M8-PLAN.md item 4 -- port of data::TorrentRepository::mergeInfo).
+    // False without writing when the row is absent, as with updateStats.
     virtual bool mergeInfo(const std::string& hash, const librats::Json& info) = 0;
     // Partial update of the good/bad vote columns only (docs/M7-PLAN.md item
     // 3 -- port of data::TorrentRepository::update's good/bad columns, as

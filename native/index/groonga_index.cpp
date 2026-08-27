@@ -434,6 +434,14 @@ bool GroongaIndex::remove(const std::string& hash)
 
 bool GroongaIndex::updateStats(const std::string& hash, int seeders, int leechers, int completed)
 {
+    // A scrape result arrives 15-40s after the row was looked at; pruning
+    // (Indexer::pruneBatch) may have removed the hash in between, and `load`
+    // would resurrect it as a name-less phantom row -- one that a nonzero
+    // seeder count then shields from ever being pruned again (Qt's SQL UPDATE
+    // simply matched zero rows here).
+    if (!rowExists(hash))
+        return false;
+
     const int64_t nowSecs
         = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -456,6 +464,10 @@ bool GroongaIndex::updateStats(const std::string& hash, int seeders, int leecher
 
 bool GroongaIndex::updateVotes(const std::string& hash, int good, int bad)
 {
+    // No rowExists() guard (unlike updateStats/mergeInfo): every caller
+    // (Voting, Feed::addByHash) looks the hash up in the same engine-loop
+    // turn, and pruning runs as its own engine-loop task, so the row cannot
+    // vanish between that lookup and this load.
     librats::Json rec = librats::Json::object();
     rec["_key"] = toLower(hash);
     rec["good"] = good;
@@ -468,7 +480,7 @@ bool GroongaIndex::updateVotes(const std::string& hash, int good, int bad)
     return !send(cmd, &err).is_null();
 }
 
-std::string GroongaIndex::readInfoRaw(const std::string& hash)
+std::optional<std::string> GroongaIndex::readInfoRaw(const std::string& hash)
 {
     std::string cmd = "select --table Torrents";
     cmd += arg("output_columns", "info");
@@ -477,18 +489,34 @@ std::string GroongaIndex::readInfoRaw(const std::string& hash)
 
     const librats::Json* resultSet = firstResultSet(send(cmd));
     if (!resultSet || resultSet->size() <= 2)
-        return {};
+        return std::nullopt; // row absent
     const librats::Json& row = (*resultSet)[2];
     if (!row.is_array() || row.empty() || !row[0].is_string())
-        return {};
+        return std::string();
     return row[0].get<std::string>();
+}
+
+bool GroongaIndex::rowExists(const std::string& hash)
+{
+    std::string cmd = "select --table Torrents";
+    cmd += arg("output_columns", "_id");
+    cmd += arg("filter", "_key == " + quoteToken(toLower(hash)));
+    cmd += arg("limit", "1");
+    // Groonga record IDs start at 1, so 0 doubles as "no row matched".
+    return extractFirstId(send(cmd)) != 0;
 }
 
 bool GroongaIndex::mergeInfo(const std::string& hash, const librats::Json& info)
 {
+    const std::optional<std::string> existingRaw = readInfoRaw(hash);
+    // Same phantom-row hazard as updateStats: a site scrape takes seconds to
+    // minutes, and `load` on a since-pruned hash would resurrect it.
+    if (!existingRaw)
+        return false;
+
     librats::Json merged = librats::Json::object();
-    if (const std::string existingRaw = readInfoRaw(hash); !existingRaw.empty()) {
-        librats::Json existing = librats::Json::parse(existingRaw, nullptr, false);
+    if (!existingRaw->empty()) {
+        librats::Json existing = librats::Json::parse(*existingRaw, nullptr, false);
         if (existing.is_object())
             merged = std::move(existing);
     }
