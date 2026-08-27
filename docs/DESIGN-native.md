@@ -320,7 +320,8 @@ either order, each in its own session. M7 requires librats built with
 -DRATS_STORAGE=ON; M8 makes libcurl a hard dependency (see M8-PLAN's
 dependency-policy note).
 
-M9 (optional GUI, registered 2026-08-26) deliberately has no plan doc yet.
+M9's (optional GUI, registered 2026-08-26) plan is docs/M9-PLAN.md (scoped
+2026-08-27, staged A–D with one session per stage).
 Its **toolkit decision is settled and not to be relitigated**: borealis
 (xfangfang's fork) + nanovg + yoga, over SDL2 on the retro targets (the
 owner already runs this stack on PPC/BE — xfangfang/wiliwili#570, including
@@ -331,13 +332,12 @@ under any toolkit — UX blueprint only. Architecturally the GUI is a second
 shell beside the TUI: a `gui::run()` over the same EnginePipeline pointer
 surface, gated by its own build option (`RATSN_WITH_GUI`), marshalling with
 a post-to-main-thread helper exactly like the TUI's `screen_.Post` idiom;
-`native/engine|index|platform` stay front-end-free. Write docs/M9-PLAN.md
-in a dedicated session once: (a) a small SDL text-input probe has run on
-the retro target (log SDL_TEXTINPUT/SDL_TEXTEDITING under a Cyrillic
-layout, a CJK IME, and clipboard paste — paste is the accepted fallback
-for typed CJK), (b) the exact borealis fork/tag proven in the owner's
-wiliwili port is pinned, and (c) M7/M8 have landed, since the GUI renders
-their features (feed, votes, posters).
+`native/engine|index|platform` stay front-end-free. The plan-doc deferral
+originally recorded here was lifted by the owner on 2026-08-27; its gates —
+(a) the SDL text-input probe on the retro target, (b) pinning the exact
+borealis fork/tag the owner's wiliwili port proved, (c) M7's acceptance
+passing — are now M9-PLAN.md's Stage 0 prerequisites, which implementation
+(Stage B onward; Stage A is engine-free skeleton work) still waits on.
 
 All development and milestone checks run on little-endian — it's simpler for
 technical reasons and nothing here depends on the target hardware. Big-endian
