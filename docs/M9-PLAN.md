@@ -55,10 +55,17 @@ already-accepted translation of Qt behavior onto this engine.
     results in this file. Accepted fallback per DESIGN-native.md: paste
     covers typed CJK; layouts (1)(2) arriving via SDL_TEXTINPUT is the
     hard requirement for the search box.
-0b. **Owner pins the borealis fork + tag/commit** proven by their wiliwili
-    port (wiliwili#570), plus which backend that port validated (presumably
-    SDL2). Record the pin here; add the submodule in Stage A at exactly
-    that commit.
+0b. **Borealis pin (owner, 2026-08-27): `github.com/xfangfang/borealis`,
+    branch `wiliwili` (the fork's default), commit
+    `5f08b286f3df737f3321d2247a6fe633fcead03c`** — this is both what
+    wiliwili's own submodule points at and the current branch tip (verified
+    identical via the GitHub compare API at pin time; tip commit dated
+    2026-04-25, "Fix the crash caused by incorrect key bindings"). Stage A
+    adds the submodule at exactly that SHA, `branch = wiliwili` in
+    .gitmodules for future bumps. Still owner-supplied before Stage A:
+    which backend the PPC port validated (presumably SDL2) and whether that
+    port carries local overlay patches on top of this borealis commit —
+    if it does, those patches are part of the pin.
 0c. **M7 acceptance passes** (two-node votes/feed check, docs/M7-PLAN.md)
     — the sequencing rule in DESIGN-native.md §12 holds; M7 is currently
     unbuilt on the owner's side (needs librats `-DRATS_STORAGE=ON`). The
