@@ -55,17 +55,32 @@ already-accepted translation of Qt behavior onto this engine.
     results in this file. Accepted fallback per DESIGN-native.md: paste
     covers typed CJK; layouts (1)(2) arriving via SDL_TEXTINPUT is the
     hard requirement for the search box.
-0b. **Borealis pin (owner, 2026-08-27): `github.com/xfangfang/borealis`,
-    branch `wiliwili` (the fork's default), commit
-    `5f08b286f3df737f3321d2247a6fe633fcead03c`** — this is both what
-    wiliwili's own submodule points at and the current branch tip (verified
-    identical via the GitHub compare API at pin time; tip commit dated
-    2026-04-25, "Fix the crash caused by incorrect key bindings"). Stage A
-    adds the submodule at exactly that SHA, `branch = wiliwili` in
-    .gitmodules for future bumps. Still owner-supplied before Stage A:
-    which backend the PPC port validated (presumably SDL2) and whether that
-    port carries local overlay patches on top of this borealis commit —
-    if it does, those patches are part of the pin.
+0b. **Borealis pin — RESOLVED (owner, 2026-08-27):
+    `github.com/xfangfang/borealis`, branch `wiliwili` (the fork's
+    default), commit `5f08b286f3df737f3321d2247a6fe633fcead03c`** — this is
+    both what wiliwili's own submodule points at and the current branch tip
+    (verified identical via the GitHub compare API at pin time; tip commit
+    dated 2026-04-25, "Fix the crash caused by incorrect key bindings").
+    Stage A adds the submodule at exactly that SHA, `branch = wiliwili` in
+    .gitmodules for future bumps. The submodule stays pristine — the
+    owner's PPC port carries exactly two patches on the borealis tree, both
+    living in their ports overlay
+    (`macos-powerpc/powerpc-ports`, `multimedia/wiliwili/files/`), applied
+    at MacPorts build time on the retro target, and neither is needed for
+    x86 dev builds:
+    - `0004-fix-features_cpu.patch` — borealis-vendored libretro-common
+      (`lib/extern/libretro-common/features/features_cpu.c`): PPC/macOS
+      build fix (ppc_intrinsics, mach clock, `__mftb`). PPC-only effect;
+      owner: no impact for ratsn's own code.
+    - `0005-borealis-gl.patch` — `lib/platforms/sdl/sdl_video.cpp`:
+      requests a GL 2.0 context instead of 2.1 (one-line version guard for
+      the retro GPU's GL floor).
+    **Backend — RESOLVED: SDL2**, validated by the owner's PPC port. GLFW
+    remains the optional newer-systems alternative only: the owner's
+    vendored-patched GLFW worked on Catalina but not on 10.6
+    out-of-the-box; retrying on 10.6 with their patches for the latest
+    GLFW release is possible but not an M9 dependency — nothing in this
+    plan may assume GLFW works on the retro target.
 0c. **M7 acceptance passes** (two-node votes/feed check, docs/M7-PLAN.md)
     — the sequencing rule in DESIGN-native.md §12 holds; M7 is currently
     unbuilt on the owner's side (needs librats `-DRATS_STORAGE=ON`). The
