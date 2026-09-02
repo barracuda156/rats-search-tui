@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1](https://github.com/DEgITx/rats-search/compare/v2.3.0...v2.3.1) (2026-09-02)
+
+
+### 🐛 Bug Fixes
+
+
+- **torrent:** Implemented uTP + encryption torrent protocol - more peers will be founded for torrent downloading and dht search([29fef43](https://github.com/DEgITx/rats-search/commit/29fef43cd561d6cc5c953d372bd9470261d3d591)) by @DEgITx
+
+
+### 📚 Documentation
+
+
+- Update CHANGELOG.md for v2.3.0([6aa9e03](https://github.com/DEgITx/rats-search/commit/6aa9e03203d38036b0843dbc42adb057cdf08e25)) by @github-actions[bot]
+
+
+
+
+### 👥 Contributors
+
+
+
+- [@DEgITx](https://github.com/DEgITx) — 1 commit
+
+
+- [@github-actions[bot]](https://github.com/github-actions[bot]) — 1 commit
+
+
 ## [2.3.0](https://github.com/DEgITx/rats-search/compare/v2.2.7...v2.3.0) (2026-08-30)
 
 
@@ -1557,6 +1584,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **config:** Proper config debug([5679340](https://github.com/DEgITx/rats-search/commit/56793400389e73f2ce96f0eb4c4b5f91d539631c)) by @DEgITx
 - **readme:** New feature about rest api([78c6df5](https://github.com/DEgITx/rats-search/commit/78c6df5557ea687fb1a2f0956e884acc77c370a1)) by @DEgITx
 - **imports:** Fix checking submodules to prevent error on start([03f0ab7](https://github.com/DEgITx/rats-search/commit/03f0ab7a475b17d6ba2461a939558276bedbd135)) by @DEgITx
 - **core:** Fix support of manticore 6.3 and more recent versions([7c0d5ca](https://github.com/DEgITx/rats-search/commit/7c0d5cadf859a6b5ec2c78c34c9a3fcb6ed14d71)) by @DEgITx
@@ -1594,7 +1622,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 24 commits
+- [@DEgITx](https://github.com/DEgITx) — 25 commits
 
 
 ## [1.11.0](https://github.com/DEgITx/rats-search/compare/v1.10.0...v1.11.0) (2023-05-21)
@@ -1605,7 +1633,6 @@ All notable changes to this project will be documented in this file.
 
 - **ci:** Fix linux build([e2eed07](https://github.com/DEgITx/rats-search/commit/e2eed076de7216dd9c238c401e598a9c144f29c1)) by @DEgITx
 - **torrent:** Fix adding torrent for new manticore version (duplicate field)([cebb462](https://github.com/DEgITx/rats-search/commit/cebb462c53a11dd2e57e3b9302b4b27338f42d29)) by @DEgITx
-- **config:** Proper config debug([5679340](https://github.com/DEgITx/rats-search/commit/56793400389e73f2ce96f0eb4c4b5f91d539631c)) by @DEgITx
 
 
 ### 🚀 Features
@@ -1621,7 +1648,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 5 commits
+- [@DEgITx](https://github.com/DEgITx) — 4 commits
 
 
 ## [1.10.0](https://github.com/DEgITx/rats-search/compare/v1.9.0...v1.10.0) (2023-02-26)
@@ -1680,6 +1707,7 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 
+- **core:** Upgrade to electron 16([30a6901](https://github.com/DEgITx/rats-search/commit/30a69010771eec0c1ae9bb1a8993688973b8b008)) by @DEgITx
 - **core:** Upgrade to electron 17([657d49f](https://github.com/DEgITx/rats-search/commit/657d49f453fcafef8b8f6251659ef938987f0bd7)) by @DEgITx
 - **core:** Update electron([b57073e](https://github.com/DEgITx/rats-search/commit/b57073e026d893db5f0cdeb043e78ea576346b7d)) by @DEgITx
 - **core:** Update deps([0e92916](https://github.com/DEgITx/rats-search/commit/0e9291616a3744717e9222e9e45009c013ce5b47)) by @DEgITx
@@ -1692,7 +1720,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 8 commits
+- [@DEgITx](https://github.com/DEgITx) — 9 commits
 
 
 ## [1.8.1](https://github.com/DEgITx/rats-search/compare/v1.8.0...v1.8.1) (2021-09-22)
@@ -1742,8 +1770,8 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 
+- **server:** Missing rats.log functionality restored #145([e306c8d](https://github.com/DEgITx/rats-search/commit/e306c8d46c3bb3fea3ce2964313d3c07ea102d2c)) by @DEgITx
 - **log:** Using tagslog([fa112ff](https://github.com/DEgITx/rats-search/commit/fa112ffd9c5a4753a2e553789ba7f6f931a14466)) by @DEgITx
-- **core:** Upgrade to electron 16([30a6901](https://github.com/DEgITx/rats-search/commit/30a69010771eec0c1ae9bb1a8993688973b8b008)) by @DEgITx
 
 
 
@@ -1766,19 +1794,13 @@ All notable changes to this project will be documented in this file.
 - **ui:** Fix blank screen on app start #147([45bf73d](https://github.com/DEgITx/rats-search/commit/45bf73d012c659fb751c492c447e751753ac6c21)) by @DEgITx
 
 
-### 🚀 Features
-
-
-- **server:** Missing rats.log functionality restored #145([e306c8d](https://github.com/DEgITx/rats-search/commit/e306c8d46c3bb3fea3ce2964313d3c07ea102d2c)) by @DEgITx
-
-
 
 
 ### 👥 Contributors
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 4 commits
+- [@DEgITx](https://github.com/DEgITx) — 3 commits
 
 
 ## [1.7.0](https://github.com/DEgITx/rats-search/compare/v1.6.0...v1.7.0) (2021-07-11)
@@ -1825,6 +1847,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **tests:** Fix timeout testing([1c8b3a3](https://github.com/DEgITx/rats-search/commit/1c8b3a36a2eae586cfd07c09d82dafe56ae3aa65)) by @DEgITx
 - **download:** Fix download status in recent torrents([8b1fc51](https://github.com/DEgITx/rats-search/commit/8b1fc513ad70523aa3c29b202af02b6d1ec1dee9)) by @DEgITx
 - **search:** Double search on DHT([619b3cc](https://github.com/DEgITx/rats-search/commit/619b3ccd32f12e716d8261f9a2a011b9cce3affa)) by @DEgITx
 - **search:** Improve search on magnet queries([9d684b8](https://github.com/DEgITx/rats-search/commit/9d684b89a697b51c126263b8ad1f800636890ab8)) by @DEgITx
@@ -1848,7 +1871,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 10 commits
+- [@DEgITx](https://github.com/DEgITx) — 11 commits
 
 
 ## [1.5.0](https://github.com/DEgITx/rats-search/compare/v1.4.2...v1.5.0) (2021-01-14)
@@ -1864,7 +1887,6 @@ All notable changes to this project will be documented in this file.
 - **tests:** Fix tests on new api([4b763c9](https://github.com/DEgITx/rats-search/commit/4b763c937762858afbf6014d9b5049c356931920)) by @DEgITx
 - **changelog:** Fix changelog on new electron([8522f00](https://github.com/DEgITx/rats-search/commit/8522f0068593d710c05d0110240598f20fcf3af0)) by @DEgITx
 - **web:** Fix web version([7c3ad12](https://github.com/DEgITx/rats-search/commit/7c3ad128191e1e12c6c2a9ca86ddcd9219e54376)) by @DEgITx
-- **tests:** Fix timeout testing([1c8b3a3](https://github.com/DEgITx/rats-search/commit/1c8b3a36a2eae586cfd07c09d82dafe56ae3aa65)) by @DEgITx
 
 
 ### 🚀 Features
@@ -1881,7 +1903,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 11 commits
+- [@DEgITx](https://github.com/DEgITx) — 10 commits
 
 
 ## [1.4.2](https://github.com/DEgITx/rats-search/compare/v1.4.1...v1.4.2) (2020-01-04)
@@ -1988,6 +2010,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **core:** Fix sometimes calc of torrents sizes([f255b87](https://github.com/DEgITx/rats-search/commit/f255b8770a78ec765755fb3ebdc092e4b531b54d)) by @DEgITx
 - **relay:** Priority to relays peers([620a6c0](https://github.com/DEgITx/rats-search/commit/620a6c0c5e181557c34552973f244d1e515e60ec)) by @DEgITx
 
 
@@ -1997,7 +2020,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 1 commit
+- [@DEgITx](https://github.com/DEgITx) — 2 commits
 
 
 ## [1.2.0](https://github.com/DEgITx/rats-search/compare/v1.1.4...v1.2.0) (2019-03-31)
@@ -2007,7 +2030,6 @@ All notable changes to this project will be documented in this file.
 
 
 - **p2p:** Additional check of dublicated peers([726afd7](https://github.com/DEgITx/rats-search/commit/726afd750c23be5ed69a02fff62c2c2f1fe7354f)) by @DEgITx
-- **core:** Fix sometimes calc of torrents sizes([f255b87](https://github.com/DEgITx/rats-search/commit/f255b8770a78ec765755fb3ebdc092e4b531b54d)) by @DEgITx
 
 
 ### 📚 Documentation
@@ -2034,7 +2056,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 5 commits
+- [@DEgITx](https://github.com/DEgITx) — 4 commits
 
 
 ## [1.1.4](https://github.com/DEgITx/rats-search/compare/v1.1.3...v1.1.4) (2019-02-19)
@@ -2347,6 +2369,8 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 
+- **rutracker:** Rutracker basic integratioin([bf23587](https://github.com/DEgITx/rats-search/commit/bf23587211bebc988f8d24cd2ed2846bc34c5a4c)) by @DEgITx
+- **nyaa:** Support of nyaa torrents([ffd0643](https://github.com/DEgITx/rats-search/commit/ffd0643c0b1e593115e555a48321fa3d665d7c59)) by @DEgITx
 - **tests:** Search test([ae7b6fe](https://github.com/DEgITx/rats-search/commit/ae7b6fe793ef9ddd1f3b243ea061b1f840bb2654)) by @DEgITx
 - **drop:** Support torrents folder drag and drop with recursive scan torrents files([82e7764](https://github.com/DEgITx/rats-search/commit/82e77640d685624ca36a0b8cca4b98a5d62d992e)) by @DEgITx
 - **search:** Support japanese, korean, chinese propper search([08d6672](https://github.com/DEgITx/rats-search/commit/08d6672eb040c8b5c26fc7820181b15b49f24f32)) by @DEgITx
@@ -2371,7 +2395,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 23 commits
+- [@DEgITx](https://github.com/DEgITx) — 25 commits
 
 
 ## [0.28.0](https://github.com/DEgITx/rats-search/compare/v0.27.0...v0.28.0) (2018-08-07)
@@ -2448,8 +2472,6 @@ All notable changes to this project will be documented in this file.
 - **search:** Hash/magnet search support in db([b48ac7f](https://github.com/DEgITx/rats-search/commit/b48ac7f97364d278dd7d5681bc16232012401769)) by @DEgITx
 - **search:** Add remote torrents in db via dht and search requests([c6bef2f](https://github.com/DEgITx/rats-search/commit/c6bef2f94ab851c4f260a56b530e0c07a011af68)) by @DEgITx
 - **torrents:** Add support for dropping torrent to base just with window([1442a65](https://github.com/DEgITx/rats-search/commit/1442a65c6e6bb3798c666745f60845c0b3dfd092)) by @DEgITx
-- **rutracker:** Rutracker basic integratioin([bf23587](https://github.com/DEgITx/rats-search/commit/bf23587211bebc988f8d24cd2ed2846bc34c5a4c)) by @DEgITx
-- **nyaa:** Support of nyaa torrents([ffd0643](https://github.com/DEgITx/rats-search/commit/ffd0643c0b1e593115e555a48321fa3d665d7c59)) by @DEgITx
 - **closing:** Fast window closing/hiding([585b683](https://github.com/DEgITx/rats-search/commit/585b68338052ed7f7913779e949617a9d4dab6c2)) by @DEgITx
 
 
@@ -2459,7 +2481,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 19 commits
+- [@DEgITx](https://github.com/DEgITx) — 17 commits
 
 
 ## [0.26.2](https://github.com/DEgITx/rats-search/compare/v0.26.1...v0.26.2) (2018-07-22)
@@ -3266,6 +3288,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **gui:** Typo in save settings([d5a9d8c](https://github.com/DEgITx/rats-search/commit/d5a9d8c0cd35acbed8651de86193afc8eeefdc5e)) by @DEgITx
 - **macos:** Mac os icon size fix #10([3c0930f](https://github.com/DEgITx/rats-search/commit/3c0930fcd63c7b58d1e73228e11f7617c10ff581)) by @DEgITx
 
 
@@ -3286,7 +3309,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 7 commits
+- [@DEgITx](https://github.com/DEgITx) — 8 commits
 
 
 ## [0.11.0](https://github.com/DEgITx/rats-search/compare/v0.10.0...v0.11.0) (2018-03-07)
@@ -3295,9 +3318,9 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **search:** Show torrent page from remote peer([1c626fa](https://github.com/DEgITx/rats-search/commit/1c626fa2bffb5ab1fa033bb5cc9df6cef3409515)) by @DEgITx
 - **p2p:** Situation when ignoring yourself address is very slow([5cd9b9f](https://github.com/DEgITx/rats-search/commit/5cd9b9f22922a53b6a141416244f294673340f7b)) by @DEgITx
 - **changelog:** Fix modal peers display([c407998](https://github.com/DEgITx/rats-search/commit/c40799816b3ad7c7ee9e9239ad06279e04604b7c)) by @DEgITx
-- **gui:** Typo in save settings([d5a9d8c](https://github.com/DEgITx/rats-search/commit/d5a9d8c0cd35acbed8651de86193afc8eeefdc5e)) by @DEgITx
 
 
 ### 🚀 Features
@@ -3331,7 +3354,12 @@ All notable changes to this project will be documented in this file.
 - **network:** Fix stun error on startup if no network available([3bed2b1](https://github.com/DEgITx/rats-search/commit/3bed2b13cb0f3bcd70f226bcb734213e1e36def2)) by @DEgITx
 - **gui:** Some incorrect information removed from top header([a8db927](https://github.com/DEgITx/rats-search/commit/a8db927c8d928970e711ad681a99fc1bc896b93c)) by @DEgITx
 - **vote:** Just disable for future improvements in p2p([bbea5c5](https://github.com/DEgITx/rats-search/commit/bbea5c5d8a03e5db34b641a4a468216e726c91c1)) by @DEgITx
-- **search:** Show torrent page from remote peer([1c626fa](https://github.com/DEgITx/rats-search/commit/1c626fa2bffb5ab1fa033bb5cc9df6cef3409515)) by @DEgITx
+
+
+### 📚 Documentation
+
+
+- **usage:** English basic translation of usage manual([0b39227](https://github.com/DEgITx/rats-search/commit/0b39227a1f075f89d7ac4464f65ab69a4b8e9f57)) by @DEgITx
 
 
 ### 🚀 Features
@@ -3359,7 +3387,7 @@ All notable changes to this project will be documented in this file.
 ### 📚 Documentation
 
 
-- **usage:** English basic translation of usage manual([0b39227](https://github.com/DEgITx/rats-search/commit/0b39227a1f075f89d7ac4464f65ab69a4b8e9f57)) by @DEgITx
+- **docs:** Basic ru doc([30e2c53](https://github.com/DEgITx/rats-search/commit/30e2c53c676b8cc3fa9f68720a25106109da51b1)) by @DEgITx
 
 
 ### 🚀 Features
@@ -3387,12 +3415,6 @@ All notable changes to this project will be documented in this file.
 - **network:** Limit package usage([bdaaa02](https://github.com/DEgITx/rats-search/commit/bdaaa020cc23bd38d5fc565c0712e0dd214a585f)) by @DEgITx
 
 
-### 📚 Documentation
-
-
-- **docs:** Basic ru doc([30e2c53](https://github.com/DEgITx/rats-search/commit/30e2c53c676b8cc3fa9f68720a25106109da51b1)) by @DEgITx
-
-
 ### 🚀 Features
 
 
@@ -3407,7 +3429,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 6 commits
+- [@DEgITx](https://github.com/DEgITx) — 5 commits
 
 
 ## [0.7.1](https://github.com/DEgITx/rats-search/compare/v0.7.0...v0.7.1) (2018-02-21)
@@ -3470,6 +3492,24 @@ All notable changes to this project will be documented in this file.
 - [@DEgITx](https://github.com/DEgITx) — 14 commits
 
 
+## [0.6.1](https://github.com/DEgITx/rats-search/compare/v0.6.0...v0.6.1) (2018-02-12)
+
+
+### 🐛 Bug Fixes
+
+
+- **macos:** Fix closing under some platforms([a5caf25](https://github.com/DEgITx/rats-search/commit/a5caf25269a0bcf87181c4f13f652c447aab1c93)) by @DEgITx
+
+
+
+
+### 👥 Contributors
+
+
+
+- [@DEgITx](https://github.com/DEgITx) — 1 commit
+
+
 ## [0.6.0](https://github.com/DEgITx/rats-search/compare/v0.5.0...v0.6.0) (2018-02-12)
 
 
@@ -3479,7 +3519,6 @@ All notable changes to this project will be documented in this file.
 - **macos:** Fix updates on Mac OS X([fd64c70](https://github.com/DEgITx/rats-search/commit/fd64c708538e3d76c2112381201603393d2792d8)) by @DEgITx
 - **macos:** Normal icon([2125abc](https://github.com/DEgITx/rats-search/commit/2125abc9b4a4224ddf78ab32525dd1f4fc6a3418)) by @DEgITx
 - **windows:** Start fix in some cases (possible win7 fix)([464da34](https://github.com/DEgITx/rats-search/commit/464da346d1c882f465abc1d00145c57a13533247)) by @DEgITx
-- **macos:** Fix closing under some platforms([a5caf25](https://github.com/DEgITx/rats-search/commit/a5caf25269a0bcf87181c4f13f652c447aab1c93)) by @DEgITx
 
 
 ### 🔧 Refactor
@@ -3502,7 +3541,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 8 commits
+- [@DEgITx](https://github.com/DEgITx) — 7 commits
 
 
 ## [0.5.0](https://github.com/DEgITx/rats-search/compare/v0.4.0...v0.5.0) (2018-02-11)
@@ -3541,6 +3580,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
+- **unix:** Resolve problem with icon part at some systems([4cc1e8a](https://github.com/DEgITx/rats-search/commit/4cc1e8a62ba129c194ff2716afcf7c7c84565847)) by @DEgITx
 - **app:** Support additional arguments on messages([0e46df3](https://github.com/DEgITx/rats-search/commit/0e46df3dbc44accb4df28a40b2d52a8941de03df)) by @DEgITx
 - **app:** Fix removing events on render process([075bf7a](https://github.com/DEgITx/rats-search/commit/075bf7a9da0db907dbedddf4a7d4bb01284d78a2)) by @DEgITx
 - **image:** Restored spinner on downloading metadata([63e1af9](https://github.com/DEgITx/rats-search/commit/63e1af9b59f5bf12bc838a781ad8b1228b0a7355)) by @DEgITx
@@ -3572,7 +3612,7 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 13 commits
+- [@DEgITx](https://github.com/DEgITx) — 14 commits
 
 
 ## [0.3.1](https://github.com/DEgITx/rats-search/compare/v0.3.0...v0.3.1) (2018-02-06)
@@ -3581,7 +3621,7 @@ All notable changes to this project will be documented in this file.
 ### 🐛 Bug Fixes
 
 
-- **unix:** Resolve problem with icon part at some systems([4cc1e8a](https://github.com/DEgITx/rats-search/commit/4cc1e8a62ba129c194ff2716afcf7c7c84565847)) by @DEgITx
+- **windows:** Resolve some encoding problem with search daemon process([7b4f370](https://github.com/DEgITx/rats-search/commit/7b4f37081fd19b3826587ca8fe843444f32eb661)) by @DEgITx
 
 
 
@@ -3601,7 +3641,6 @@ All notable changes to this project will be documented in this file.
 
 - **config:** Fixed saving configuration on develop builds([9a99803](https://github.com/DEgITx/rats-search/commit/9a99803c68b55141f5c4677598d2b714c5a30de6)) by @DEgITx
 - **feed:** Disabled fake torrents for desktop([74def9f](https://github.com/DEgITx/rats-search/commit/74def9f7638a7c5a2dfcdd00944c5fc973e9c6eb)) by @DEgITx
-- **windows:** Resolve some encoding problem with search daemon process([7b4f370](https://github.com/DEgITx/rats-search/commit/7b4f37081fd19b3826587ca8fe843444f32eb661)) by @DEgITx
 
 
 ### 📚 Documentation
@@ -3613,6 +3652,7 @@ All notable changes to this project will be documented in this file.
 ### 🚀 Features
 
 
+- **config:** New settings for application (port, cpu usage eth.)([a87a59a](https://github.com/DEgITx/rats-search/commit/a87a59a828e56c38e0482f73c1a1f94fb4d9faf2)) by @semantic-release-bot
 - **config:** Database place path([17aff1a](https://github.com/DEgITx/rats-search/commit/17aff1aca0acecc53c709f4a8ca8c3ef14671865)) by @DEgITx
 - **changelog:** Changelog inside application([9bac53f](https://github.com/DEgITx/rats-search/commit/9bac53f559f42551767ca7fce1f130660924d852)) by @DEgITx
 - **config:** Message when settings saved([8212748](https://github.com/DEgITx/rats-search/commit/8212748f475991e8df023b9f0755abde42781232)) by @DEgITx
@@ -3624,7 +3664,10 @@ All notable changes to this project will be documented in this file.
 
 
 
-- [@DEgITx](https://github.com/DEgITx) — 7 commits
+- [@DEgITx](https://github.com/DEgITx) — 6 commits
+
+
+- [@semantic-release-bot](https://github.com/semantic-release-bot) — 1 commit
 
 
 ## [0.2.0](https://github.com/DEgITx/rats-search/compare/v0.1.0...v0.2.0) (2018-02-04)
@@ -3673,7 +3716,6 @@ All notable changes to this project will be documented in this file.
 - **build:** Semantic release messages scan([354d68b](https://github.com/DEgITx/rats-search/commit/354d68bd5c39b508188850e4e6b89448ae747461)) by @DEgITx
 - **readme:** Travis status build in readme([864d24c](https://github.com/DEgITx/rats-search/commit/864d24c783b906012e247c6c1be9f4d711a9c493)) by @DEgITx
 - **readme:** Semantic release in readme([8f5ace0](https://github.com/DEgITx/rats-search/commit/8f5ace0a8001de1cfa93bdede8b4281fae2bc498)) by @DEgITx
-- **config:** New settings for application (port, cpu usage eth.)([a87a59a](https://github.com/DEgITx/rats-search/commit/a87a59a828e56c38e0482f73c1a1f94fb4d9faf2)) by @semantic-release-bot
 
 
 
@@ -3683,9 +3725,6 @@ All notable changes to this project will be documented in this file.
 
 
 - [@DEgITx](https://github.com/DEgITx) — 24 commits
-
-
-- [@semantic-release-bot](https://github.com/semantic-release-bot) — 1 commit
 
 
 ## [0.1.0](https://github.com/DEgITx/rats-search/compare/...v0.1.0) (2018-01-29)
