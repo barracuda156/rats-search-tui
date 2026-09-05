@@ -3,6 +3,7 @@
 #include "platform/engine_loop.h"
 #include "platform/log.h"
 
+#include "librats/core/types.h"  // CloseReason, to_string
 #include "librats/node/node.h"
 #include "librats/peer/peer.h"
 #include "librats/peer/peer_id.h"
@@ -31,9 +32,12 @@ PeerRegistry::PeerRegistry(librats::Node& node, librats::MessageJson& messages, 
         std::string peerIdHex = peer.id().to_hex();
         engineLoop_.post([this, peerIdHex] { onPeerConnected(peerIdHex); });
     });
-    node_.on_peer_disconnected([this](const librats::PeerId& id) {
+    node_.on_peer_disconnected([this](const librats::PeerId& id, librats::CloseReason reason) {
         std::string peerIdHex = id.to_hex();
-        engineLoop_.post([this, peerIdHex] { onPeerDisconnected(peerIdHex); });
+        // to_string returns a static string literal, so it is safe to carry
+        // across the hop to the EngineLoop thread by pointer.
+        const char* reasonText = librats::to_string(reason);
+        engineLoop_.post([this, peerIdHex, reasonText] { onPeerDisconnected(peerIdHex, reasonText); });
     });
     messages_.on("client_info", [this](const librats::PeerId& from, const librats::Json& data) {
         std::string peerIdHex = from.to_hex();
@@ -70,8 +74,12 @@ void PeerRegistry::onPeerConnected(const std::string& peerIdHex)
         onPeerConnectedExternal_(peerIdHex);
 }
 
-void PeerRegistry::onPeerDisconnected(const std::string& peerIdHex)
+void PeerRegistry::onPeerDisconnected(const std::string& peerIdHex, const char* reason)
 {
+    // The reason distinguishes "the peer went away" from "we were dropped as a
+    // slow consumer" -- see peer_network.h. Nothing acts on it yet; log it so a
+    // SlowConsumer disconnect is not invisible.
+    platform::log() << "PeerRegistry: peer " << peerIdHex.substr(0, 8) << " disconnected (" << reason << ")\n";
     peers_.erase(peerIdHex);
 }
 

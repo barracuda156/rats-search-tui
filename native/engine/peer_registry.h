@@ -55,7 +55,9 @@ public:
 
 private:
     void onPeerConnected(const std::string& peerIdHex);
-    void onPeerDisconnected(const std::string& peerIdHex);
+    // reason is librats::to_string(CloseReason), rendered on the reactor
+    // thread before the hop to the EngineLoop.
+    void onPeerDisconnected(const std::string& peerIdHex, const char* reason);
     void onClientInfo(const std::string& peerIdHex, domain::PeerStats stats);
     domain::PeerStats ourStats() const;
 
